@@ -1,4 +1,4 @@
-PhoneMirror bundles the following third-party software, unmodified:
+Mirror bundles the following third-party software, unmodified:
 
 - scrcpy 2.5 (scrcpy.exe, scrcpy-server, icon.png)
   Copyright (C) 2018 Genymobile, Copyright (C) 2018-2024 Romain Vimont

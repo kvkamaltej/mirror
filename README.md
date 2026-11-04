@@ -1,13 +1,27 @@
-# PhoneMirror
+# Mirror
 
 A small Windows app that mirrors and controls an Android phone from the PC, over USB or Wi-Fi.
-`dist\PhoneMirror.exe` is one portable file (about 18 MB) with scrcpy 2.5 and adb built in.
+`dist\Mirror.exe` is one portable file (about 18 MB) with scrcpy 2.5 and adb built in.
 Nothing needs to be installed on the PC. It uses a Windows 11 style with light and dark themes
 (it follows Windows by default).
 
-## Phone setup (once)
-Settings → About phone → tap **Build number** 7 times → Developer options → turn on **USB debugging**.
-Plug the phone in and tap **Allow** on the phone.
+## Phone setup (once) — the Get started page
+Mirror opens on **Get started** the first time, and whenever a phone is plugged in but not ready. It works for any
+Android phone:
+1. Open Settings and search for **Build number** (on some phones *Software version* or *OS version*). Tap it 7 times.
+2. Search Settings for **USB debugging** and turn it on.
+3. Plug in the phone and tap **Allow** (tick *Always allow from this computer*).
+
+A live checklist (*plugged in → USB debugging on → PC allowed*) updates by itself. Mirror sees a plugged-in phone
+even while debugging is still off: it looks for the USB interfaces every Android phone has (adb, or MTP file
+transfer), not a list of brands. When the brand is known, the page also shows its exact Settings path
+(Samsung, Xiaomi, OnePlus/OPPO/Realme, vivo, Huawei/Honor, Pixel and others).
+
+**No developer mode?** The same page offers view-only options that need no phone settings: Windows
+**Wireless Display** (Miracast) and Microsoft **Phone Link**.
+
+## Linux and macOS
+Not supported yet. See [docs/cross-platform-plan.md](docs/cross-platform-plan.md).
 
 ## Pages
 - **Mirror:** Start or stop mirroring. Quality can be Auto (USB High, Wi-Fi Low), Low, Medium or High.
@@ -74,5 +88,6 @@ downloads the official [scrcpy 2.5 Windows release](https://github.com/Genymobil
 To run from source without building: run `get-scrcpy.ps1` once, then `pythonw mirror.pyw`.
 Licenses are listed in `NOTICE.txt` (sv-ttk is MIT, qrcode is BSD).
 
-At runtime, settings are saved in `%APPDATA%\PhoneMirror\config.json`. The exe runs scrcpy and adb from
-`%LOCALAPPDATA%\PhoneMirror\runtime-<version>\`, which it copies there on first start.
+At runtime, settings are saved in `%APPDATA%\Mirror\config.json` (settings from the old *PhoneMirror* name are
+moved over automatically). The exe runs scrcpy and adb from `%LOCALAPPDATA%\Mirror\runtime-<version>\`, which it
+copies there on first start; older runtime folders are removed.

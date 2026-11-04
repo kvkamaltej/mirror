@@ -1,4 +1,4 @@
-"""PhoneMirror - a small Windows app to mirror and control an Android phone.
+"""Mirror - a small Windows app to mirror and control an Android phone.
 
 Wraps scrcpy + adb (bundled in ./bin, inside the exe when frozen). An adb that is
 already installed on the PC is preferred over the bundled one so the two never
@@ -33,14 +33,36 @@ try:
 except ImportError:
     qrcode = None
 
-APP = "PhoneMirror"
-VERSION = "2.0.0"
+APP = "Mirror"
+OLD_APP = "PhoneMirror"  # previous name: settings are migrated from it
+VERSION = "3.0.0"
 IS_WIN = os.name == "nt"
 NO_WINDOW = 0x08000000 if IS_WIN else 0  # CREATE_NO_WINDOW: no console flashes
 
 
 def _base_dir():
     return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+
+
+def _other_instances_running():
+    """True if another Mirror / PhoneMirror exe (not this one or its launcher) is running."""
+    if not IS_WIN:
+        return False
+    mine = {os.getpid(), os.getppid()}
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], stdin=subprocess.DEVNULL, capture_output=True,
+                             creationflags=0x08000000, timeout=10).stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.TimeoutExpired):
+        return True  # unsure: keep the old folders
+    for line in out.splitlines():
+        cols = [c.strip('"') for c in line.split('","')]
+        if len(cols) > 1 and cols[0].lower() in ("mirror.exe", "phonemirror.exe"):
+            try:
+                if int(cols[1]) not in mine:
+                    return True
+            except ValueError:
+                pass
+    return False
 
 
 def _runtime_bin():
@@ -61,9 +83,23 @@ def _runtime_bin():
             s, d = os.path.join(src, name), os.path.join(dst, name)
             if not os.path.isfile(d) or os.path.getsize(d) != os.path.getsize(s):
                 shutil.copy2(s, d)
-        return dst
     except OSError:
         return src  # read-only profile etc.: fall back to the temp copy
+    # tidy up runtime folders of older versions / the old app name - but never while
+    # another copy of the app is running: it would lose its scrcpy/adb mid-session
+    if _other_instances_running():
+        return dst
+    for base in (os.path.join(root, APP), os.path.join(root, OLD_APP)):
+        try:
+            for name in os.listdir(base):
+                path = os.path.join(base, name)
+                if name.startswith("runtime-") and os.path.normcase(path) != os.path.normcase(dst):
+                    shutil.rmtree(path, ignore_errors=True)
+            if base.endswith(OLD_APP) and not os.listdir(base):
+                os.rmdir(base)
+        except OSError:
+            pass
+    return dst
 
 
 BIN = _runtime_bin()
@@ -114,7 +150,7 @@ KEYS = {
 
 # Segoe Fluent Icons / MDL2 glyphs
 ICON = {
-    "mirror": "", "connect": "", "scan": "", "tools": "",
+    "setup": "", "mirror": "", "connect": "", "scan": "", "tools": "",
     "settings": "", "phone": "", "refresh": "",
 }
 
@@ -136,8 +172,10 @@ PHONE_WORDS = ("android", "oneplus", "samsung", "galaxy", "redmi", "xiaomi", "po
 # =========================================================================== helpers
 def load_config():
     cfg = dict(DEFAULTS)
+    old = os.path.join(os.path.dirname(CONFIG_DIR), OLD_APP, "config.json")
+    path = CONFIG_FILE if os.path.isfile(CONFIG_FILE) else old  # first run after the rename
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             cfg.update(json.load(f))
     except (OSError, ValueError):
         pass
@@ -438,6 +476,117 @@ def find_open_ports(ip, ports, progress=None, cancel=None, timeout=0.35):
     with ThreadPoolExecutor(max_workers=256) as pool:
         list(pool.map(one, ports))
     return sorted(found)
+
+
+# --------------------------------------------------------------------------- setup guide
+# brand -> (turn on Developer options, turn on USB debugging, extra tip or "")
+BRAND_STEPS = {
+    "Samsung": (
+        "Settings › About phone › Software information › tap Build number 7 times",
+        "Settings › Developer options › turn on USB debugging", ""),
+    "Xiaomi / Redmi / POCO": (
+        "Settings › About phone › tap OS version (HyperOS / MIUI) 7 times",
+        "Settings › Additional settings › Developer options › turn on USB debugging",
+        "To control the phone, also turn on 'USB debugging (Security settings)' (needs a Mi account)."),
+    "OnePlus / OPPO / Realme": (
+        "Settings › About device › Version › tap Build number 7 times",
+        "Settings › System settings › Developer options › turn on USB debugging",
+        "If 'Keep phone awake' is blocked, also turn on 'Disable permission monitoring'."),
+    "vivo / iQOO": (
+        "Settings › About phone › Software version › tap Software version 7 times",
+        "Settings › System management › Developer options › turn on USB debugging", ""),
+    "Huawei / Honor": (
+        "Settings › About phone › tap Build number 7 times",
+        "Settings › System & updates › Developer options › turn on USB debugging", ""),
+    "Google Pixel / Motorola / Nokia / Nothing / other": (
+        "Settings › About phone › tap Build number 7 times",
+        "Settings › System › Developer options › turn on USB debugging", ""),
+}
+OTHER_BRAND = "Google Pixel / Motorola / Nokia / Nothing / other"
+VID_BRAND = {  # USB vendor id -> brand (18D1 = Google, also used by many other phones)
+    "04E8": "Samsung", "2717": "Xiaomi / Redmi / POCO", "2A70": "OnePlus / OPPO / Realme",
+    "22D9": "OnePlus / OPPO / Realme", "2D95": "vivo / iQOO", "12D1": "Huawei / Honor",
+    "339B": "Huawei / Honor", "22B8": OTHER_BRAND, "2E04": OTHER_BRAND, "18D1": None,
+    "0FCE": OTHER_BRAND, "1004": OTHER_BRAND, "0B05": OTHER_BRAND, "17EF": OTHER_BRAND,
+    "0BB4": OTHER_BRAND, "19D2": OTHER_BRAND, "1BBB": OTHER_BRAND, "2A45": OTHER_BRAND,
+}
+
+
+def brand_from_text(text):
+    t = (text or "").lower()
+    for words, brand in ((("samsung", "galaxy", "sm-"), "Samsung"),
+                         (("xiaomi", "redmi", "poco", "mi "), "Xiaomi / Redmi / POCO"),
+                         (("oneplus", "oppo", "realme", "le2", "cph", "rmx"), "OnePlus / OPPO / Realme"),
+                         (("vivo", "iqoo"), "vivo / iQOO"),
+                         (("huawei", "honor"), "Huawei / Honor")):
+        if any(w in t for w in words):
+            return brand
+    return None
+
+
+APPLE_VID = "05AC"  # iPhones also show up as portable devices - never "Android"
+
+
+def usb_phones():
+    """Android phones plugged in by USB, as Windows sees them - works for any brand
+    and even when USB debugging is off.
+
+    A USB device counts as an Android phone when it exposes something every Android
+    phone has: the adb interface (class FF/42/01, when debugging is on) or an MTP /
+    PTP file-transfer interface. The vendor-id list only catches phones in
+    'charging only' mode, which expose neither.
+    Returns [{"serial", "vid", "brand", "name", "adb_iface", "mtp", "sure"}]."""
+    if not IS_WIN:
+        return []
+    ps = ("Get-CimInstance Win32_PnPEntity | Where-Object { $_.DeviceID -like 'USB\\VID_*' -or $_.PNPClass -eq 'WPD' }"
+          " | ForEach-Object { $_.DeviceID + '|' + $_.Name + '|' + $_.PNPClass + '|' + ($_.CompatibleID -join ' ') }")
+    rc, out, _ = run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], timeout=20)
+    devices = {}
+    for line in out.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) < 4:
+            continue
+        dev_id, name, cls, compat = parts[0], parts[1], parts[2], parts[3].upper()
+        m = re.match(r"USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})(&MI_\d+)?\\(.+)$", dev_id, re.I)
+        if not m:
+            continue
+        vid, pid, iface, inst = m.group(1).upper(), m.group(2).upper(), m.group(3), m.group(4)
+        if vid == APPLE_VID:
+            continue
+        d = devices.setdefault(vid + pid, {"serial": "", "vid": vid, "brand": VID_BRAND.get(vid), "name": "",
+                                           "adb_iface": False, "mtp": False, "known_vid": vid in VID_BRAND})
+        if not iface:
+            d["serial"] = inst
+        if "CLASS_FF&SUBCLASS_42&PROT_01" in compat or "adb" in name.lower():
+            d["adb_iface"] = True
+        if cls == "WPD" or "MS_COMP_MTP" in compat or "CLASS_06&SUBCLASS_01" in compat:
+            d["mtp"] = True
+            if cls == "WPD" and name:
+                d["name"] = name
+    phones = []
+    for d in devices.values():
+        if not (d["adb_iface"] or d["mtp"] or d["known_vid"]):
+            continue  # a mouse, keyboard, hub, ... - not a phone
+        d["sure"] = d["adb_iface"] or d["mtp"]
+        d["brand"] = brand_from_text(d["name"]) or d["brand"]
+        phones.append(d)
+    return phones
+
+
+def open_uri(uri):
+    if IS_WIN:
+        try:
+            os.startfile(uri)
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def has_phone_link():
+    rc, out, _ = run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                      "(Get-AppxPackage -Name Microsoft.YourPhone).PackageFamilyName"], timeout=20)
+    return out.strip() or None
 
 
 # --------------------------------------------------------------------------- Win32 bits
@@ -1278,8 +1427,8 @@ class RemoteBar:
 
 # =========================================================================== app
 class App:
-    PAGES = [("mirror", "Mirror"), ("connect", "Wireless"), ("scan", "Scan network"),
-             ("tools", "Tools"), ("settings", "Settings")]
+    PAGES = [("setup", "Get started"), ("mirror", "Mirror"), ("connect", "Wireless"),
+             ("scan", "Scan network"), ("tools", "Tools"), ("settings", "Settings")]
 
     def __init__(self, root):
         self.root = root
@@ -1300,6 +1449,10 @@ class App:
         self.nearby = []
         self.scan_cancel = threading.Event()
         self.pal = PALETTE["dark"]
+        self.usb = []              # phones Windows sees on USB (even with debugging off)
+        self.usb_checked = False
+        self.brand_auto = True     # until the user picks a brand on Get started
+        self.phone_link = None
 
         fams = set(tkfont.families(root))
         self.font = "Segoe UI Variable Text" if "Segoe UI Variable Text" in fams else "Segoe UI"
@@ -1369,9 +1522,29 @@ class App:
         self.adb_run("start-server", timeout=30)
         rc, out, _ = self.adb_run("mdns", "check", timeout=10)
         self.adb_mdns = "unavailable" not in out and rc == 0
+        self.phone_link = has_phone_link()
+        self.ui(self._update_setup)
+        first = True
         while not self.closing:
             self.refresh_devices()
+            # no usable phone over adb? look at USB the Windows way (works with debugging off)
+            if not any(d["state"] == "device" for d in self.devices.values()):
+                self.usb = usb_phones()
+            else:
+                self.usb = []
+            self.usb_checked = True
+            self.ui(self._update_setup)
+            if first:
+                first = False
+                self.ui(self._first_run_page)
             time.sleep(3)
+
+    def _first_run_page(self):
+        """First launch, or no phone ready: open Get started instead of an empty Mirror page."""
+        ready = any(d["state"] == "device" for d in self.devices.values())
+        if not ready and (not self.cfg.get("setup_seen") or self.usb):
+            self.show_page("setup")
+        self._set_cfg("setup_seen", True)
 
     def _detect_adb(self):
         src, path, notes = find_adb(self.cfg.get("adb_path", ""))
@@ -1451,6 +1624,7 @@ class App:
         self.pages_box = ttk.Frame(main, padding=(20, 4, 20, 0))
         self.pages_box.pack(fill="both", expand=True)
         self.pages = {
+            "setup": self._page_setup(self.pages_box),
             "mirror": self._page_mirror(self.pages_box),
             "connect": self._page_connect(self.pages_box),
             "scan": self._page_scan(self.pages_box),
@@ -1495,6 +1669,136 @@ class App:
     def _set_cfg(self, key, value):
         self.cfg[key] = value
         save_config(self.cfg)
+
+    # ---------------------------------------------------------------- Get started page
+    def _page_setup(self, parent):
+        f = ttk.Frame(parent)
+        cols = ttk.Frame(f)
+        cols.pack(fill="both", expand=True)
+
+        left = ttk.Frame(cols)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        s = self.card(left, "Set up your phone · one time, about 2 minutes",
+                      "Works on any Android phone. Needed for full control, the remote and recording.",
+                      fill="both", expand=True)
+        steps = [
+            ("1", "Turn on Developer options",
+             "Open Settings and search for “Build number” (on some phones: “Software version” or “OS version”). "
+             "Tap it 7 times until it says “You are now a developer”. Enter your PIN if asked."),
+            ("2", "Turn on USB debugging",
+             "Search Settings for “USB debugging” and turn it on. Tap OK on the warning."),
+            ("3", "Plug in and allow",
+             "Connect the phone with a USB cable. On the phone, tap Allow and tick "
+             "“Always allow from this computer”."),
+        ]
+        for num, title, body in steps:
+            row = ttk.Frame(s)
+            row.pack(fill="x", pady=(2, 6))
+            ttk.Label(row, text=num, style="Step.TLabel", width=2, anchor="center").pack(side="left", anchor="n", padx=(0, 10))
+            box = ttk.Frame(row)
+            box.pack(side="left", fill="x", expand=True)
+            ttk.Label(box, text=title, style="Head.TLabel").pack(anchor="w")
+            self.wrap_label(box, text=body, style="Muted.TLabel").pack(fill="x")
+
+        hint = ttk.Frame(s)
+        hint.pack(fill="x", pady=(2, 8))
+        ttk.Label(hint, text="Exact path for", style="Muted.TLabel").pack(side="left")
+        self.brand_var = tk.StringVar(value=OTHER_BRAND)
+        cb = ttk.Combobox(hint, textvariable=self.brand_var, values=list(BRAND_STEPS), state="readonly", width=34)
+        cb.pack(side="left", padx=8)
+        cb.bind("<<ComboboxSelected>>", lambda e: (setattr(self, "brand_auto", False), self._update_setup()))
+        self.brand_hint = tk.StringVar()
+        self.wrap_label(s, textvariable=self.brand_hint, style="Muted.TLabel").pack(fill="x", pady=(0, 8))
+
+        ttk.Separator(s).pack(fill="x", pady=(2, 8))
+        self.check_rows = {}
+        for key, text in (("plugged", "Phone plugged in"), ("debug", "USB debugging on"),
+                          ("allowed", "This PC allowed on the phone")):
+            row = ttk.Frame(s)
+            row.pack(fill="x", pady=1)
+            icon = ttk.Label(row, text="", font=(self.icon_font, 12), width=2)
+            icon.pack(side="left")
+            ttk.Label(row, text=text).pack(side="left", padx=(6, 0))
+            self.check_rows[key] = icon
+        self.setup_status = tk.StringVar(value="Looking for your phone...")
+        status_row = ttk.Frame(s)
+        status_row.pack(fill="x", pady=(10, 0))
+        self.setup_go = ttk.Button(status_row, text="Start mirroring", style="Accent.TButton",
+                                   command=lambda: (self.show_page("mirror"), self.toggle_mirror()))
+        self.wrap_label(status_row, textvariable=self.setup_status, style="Ok.TLabel").pack(
+            side="left", fill="x", expand=True)
+
+        right = ttk.Frame(cols, width=290)
+        right.pack(side="left", fill="y")
+        right.pack_propagate(False)
+        a = self.card(right, "No developer mode?", "Ways to see the phone without changing any phone "
+                                                   "settings. View only: no remote, recording or typing.",
+                      fill="both", expand=True)
+        ttk.Label(a, text="Wireless Display", style="Head.TLabel").pack(anchor="w", pady=(4, 0))
+        self.wrap_label(a, text="Windows shows the phone's screen (Miracast). In Projecting settings add the optional "
+                                "feature “Wireless Display”, then on the phone use Cast, Smart View or "
+                                "Screen cast. Not every phone or PC supports it.",
+                        style="Muted.TLabel").pack(fill="x", pady=(2, 6))
+        ttk.Button(a, text="Open Projecting settings",
+                   command=lambda: open_uri("ms-settings:project")).pack(anchor="w")
+        ttk.Label(a, text="Phone Link (Microsoft)", style="Head.TLabel").pack(anchor="w", pady=(14, 0))
+        self.wrap_label(a, text="Install “Link to Windows” on the phone. Shows notifications, messages, photos "
+                                "and calls; some phones can also mirror apps.",
+                        style="Muted.TLabel").pack(fill="x", pady=(2, 6))
+        self.phone_link_btn = ttk.Button(a, text="Open Phone Link", command=self.open_phone_link)
+        self.phone_link_btn.pack(anchor="w")
+        return f
+
+    def open_phone_link(self):
+        if self.phone_link:
+            ok = open_uri("shell:AppsFolder\\%s!App" % self.phone_link)
+        else:  # not installed: Microsoft Store page
+            ok = open_uri("ms-windows-store://pdp/?productid=9NMPJ99VJBWV")
+        if not ok:
+            self.log("Could not open Phone Link.")
+
+    def _update_setup(self):
+        devs = list(self.devices.values())
+        usb = self.usb
+        ready = [d for d in devs if d["state"] == "device"]
+        plugged = bool(usb) or bool(devs)
+        debug = bool(devs) or any(p["adb_iface"] for p in usb)
+        allowed = bool(ready)
+
+        # brand: from the connected phone's name if we know it, else USB info
+        if self.brand_auto:
+            names = [d.get("model", "") for d in devs] + [p.get("name", "") for p in usb]
+            brand = next((b for b in (brand_from_text(n) for n in names) if b), None) or \
+                next((p["brand"] for p in usb if p.get("brand")), None)
+            if brand:
+                self.brand_var.set(brand)
+        dev_opts, usb_dbg, extra = BRAND_STEPS.get(self.brand_var.get(), BRAND_STEPS[OTHER_BRAND])
+        self.brand_hint.set("① %s\n② %s%s" % (dev_opts, usb_dbg, ("\n" + extra) if extra else ""))
+
+        pal = self.pal
+        for key, done in (("plugged", plugged), ("debug", debug), ("allowed", allowed)):
+            self.check_rows[key].configure(text="" if done else "",
+                                           foreground=pal["ok"] if done else pal["muted"])
+        if allowed:
+            msg = "All set - your phone is ready."
+            self.setup_go.pack(side="right", padx=(10, 0))
+        else:
+            self.setup_go.pack_forget()
+            if any(d["state"] == "unauthorized" for d in devs):
+                msg = "Unlock the phone and tap Allow on the “Allow USB debugging?” message."
+            elif debug:
+                msg = ("USB debugging is on, but the phone isn't answering. Unplug it and plug it back in; "
+                       "if asked, choose “File transfer”.")
+            elif plugged:
+                msg = "Phone found. Now do steps 1 and 2 on the phone - this page updates by itself."
+            elif not self.usb_checked:
+                msg = "Looking for your phone..."
+            else:
+                msg = ("Plug the phone into this PC with a USB cable. Nothing happening? Try another cable "
+                       "(some only charge) or another USB port.")
+        self.setup_status.set(msg)
+        self.phone_link_btn.configure(text="Open Phone Link" if self.phone_link else "Get Phone Link")
+        self._update_device_info()
 
     # ---------------------------------------------------------------- Mirror page
     def _page_mirror(self, parent):
@@ -1734,6 +2038,7 @@ class App:
         st.configure("Head.TLabel", font=(self.font, 11, "bold"))
         st.configure("Muted.TLabel", foreground=pal["muted"], font=(self.font, 9))
         st.configure("Ok.TLabel", foreground=pal["ok"], font=(self.font, 9))
+        st.configure("Step.TLabel", foreground=pal["accent"], font=(self.font_display, 16, "bold"))
         st.configure("Icon.TButton", font=(self.icon_font, 10))
         st.configure("TButton", font=(self.font, 10))
         st.configure("Toggle.TButton", font=(self.font, 10))
@@ -1749,6 +2054,7 @@ class App:
         self.phone_icon.configure(foreground=pal["accent"])
         self.tree.tag_configure("phone", foreground=pal["accent"])
         self.tree.tag_configure("adb", foreground=pal["ok"])
+        self._update_setup()
         self.root.update_idletasks()
         set_titlebar_dark(self.root, dark)
 
@@ -1806,9 +2112,12 @@ class App:
     def _update_device_info(self):
         serial = self.selected()
         dev = self.devices.get(serial)
-        if not dev:
+        if not dev and self.usb:
+            self.title_var.set("Phone plugged in")
+            self.info_var.set("USB debugging is off - open Get started to turn it on (about 2 minutes).")
+        elif not dev:
             self.title_var.set("No phone connected")
-            self.info_var.set("Plug in with USB (allow debugging), or pair on the Wireless page.")
+            self.info_var.set("New here? Open Get started. Otherwise plug in with USB or use the Wireless page.")
         elif dev["state"] == "unauthorized":
             self.title_var.set(dev["model"] or "Phone found")
             self.info_var.set("Unlock the phone and tap 'Allow' on the USB debugging prompt.")
@@ -2059,7 +2368,7 @@ class App:
             self._nearby_running = False
 
     def _apply_nearby(self):
-        pair = [s for s in self.nearby if s["kind"] == "pair" and not s["name"].startswith("phonemirror-")]
+        pair = [s for s in self.nearby if s["kind"] == "pair" and not s["name"].startswith("mirror-")]
         conn = [s for s in self.nearby if s["kind"] == "connect"]
         if pair:
             addr = "%s:%s" % (pair[0]["ip"], pair[0]["port"])
@@ -2083,7 +2392,7 @@ class App:
             return
         self.qr_token += 1
         token = self.qr_token
-        name, password = "phonemirror-" + rand_str(6), rand_str(10)
+        name, password = "mirror-" + rand_str(6), rand_str(10)
         self.draw_qr("WIFI:T:ADB;S:%s;P:%s;;" % (name, password))
         self.qr_status.set("Waiting for the phone to scan...")
         self.qr_progress.pack(fill="x", pady=(0, 8), before=self.qr_btn)
