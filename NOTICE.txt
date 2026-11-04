@@ -1,0 +1,24 @@
+PhoneMirror bundles the following third-party software, unmodified:
+
+- scrcpy 2.5 (scrcpy.exe, scrcpy-server, icon.png)
+  Copyright (C) 2018 Genymobile, Copyright (C) 2018-2024 Romain Vimont
+  Apache License 2.0 - https://github.com/Genymobile/scrcpy/blob/master/LICENSE
+
+- Android Debug Bridge (adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll), platform-tools 35.0.0
+  The Android Open Source Project - Apache License 2.0
+  https://source.android.com/docs/setup/about/licenses
+
+- FFmpeg (avcodec-61.dll, avformat-61.dll, avutil-59.dll, swresample-5.dll)
+  LGPL v2.1 or later - https://ffmpeg.org/legal.html
+  Source: https://ffmpeg.org/download.html (as shipped in the scrcpy 2.5 win64 release)
+
+- SDL2 (SDL2.dll) - zlib License - https://www.libsdl.org/license.php
+
+- libusb (libusb-1.0.dll) - LGPL v2.1 - https://libusb.info
+
+- Sun Valley ttk theme (sv-ttk) - MIT License - https://github.com/rdbende/Sun-Valley-ttk-theme
+
+- python-qrcode - BSD License - https://github.com/lincolnloop/python-qrcode
+
+The LGPL libraries are loaded as separate DLLs. To use your own builds of them,
+put them in bin\ and rebuild with build.bat (source: mirror.pyw).

@@ -1,0 +1,9 @@
+# build output
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# scrcpy + adb binaries: fetched by get-scrcpy.ps1 (build.bat does it automatically)
+bin/
