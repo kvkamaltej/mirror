@@ -38,7 +38,7 @@ import skins                         # Light/Dark (sv-ttk) + drawn custom skins
 
 APP = "Mirror"
 OLD_APP = "PhoneMirror"  # previous name: settings are migrated from it
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 IS_WIN = os.name == "nt"
 NO_WINDOW = 0x08000000 if IS_WIN else 0  # CREATE_NO_WINDOW: no console flashes
 
