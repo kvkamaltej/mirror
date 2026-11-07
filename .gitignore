@@ -5,5 +5,5 @@ dist/
 __pycache__/
 *.pyc
 
-# scrcpy + adb binaries: fetched by get-scrcpy.ps1 (build.bat does it automatically)
+# scrcpy + adb binaries: fetched by get_scrcpy.py (build.bat does it automatically)
 bin/

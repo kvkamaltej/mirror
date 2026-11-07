@@ -68,7 +68,8 @@ Not supported yet. See [docs/cross-platform-plan.md](docs/cross-platform-plan.md
 - **Shell:** run `adb shell` commands with streaming output, history (Up/Down) and a list of common commands.
   Each command stops after 2 minutes or 2 MB of output; **Stop** ends it sooner. *Open adb shell in a terminal* opens
   a real console for interactive programs (adb on PATH, `ANDROID_SERIAL` set to the selected phone).
-- **Apps:** the installed apps with version codes (system apps optional) and search. Launch (or double-click),
+- **Apps:** the installed apps with their **icons and real names**, version codes (system apps optional) and search
+  (by name or package). Icons are cached per app version in `%APPDATA%\Mirror\icons`. Launch (or double-click),
   Force stop, Logcat for app, App info on the phone, **Clear data…** and **Uninstall…** (both ask first). Selecting an
   app shows its version, target/min SDK, last update and whether it's running.
 - **Device:**
@@ -80,7 +81,24 @@ Not supported yet. See [docs/cross-platform-plan.md](docs/cross-platform-plan.md
     forward (this PC's port reaches the phone), with a list of what's active.
   - **adb server:** Restart, **Stop / Start** (while stopped, Mirror stops polling so it doesn't start adb again;
     use this when another tool needs adb to itself), and Open terminal.
-- **Settings:** theme, which adb to use, and the folder for screenshots and recordings.
+- **Settings:** skin, which adb to use, and the folder for screenshots and recordings.
+
+## Skins
+Pick one in **Settings → Skin**. Each tile is a live preview.
+
+| Skin | Look |
+|---|---|
+| System / Light / Dark | Windows 11 (sv-ttk); System follows Windows |
+| Developer | editor greys, blue accents and a blue status bar, Cascadia Mono |
+| Hacker | terminal green on black, monospace everywhere, square corners, blinking `> mirror` cursor, green log levels |
+| Gamer | deep purple with neon magenta and cyan, Bahnschrift, RGB-cycling nav bar and moving gradient glow |
+| Aurora | midnight navy, violet-to-cyan gradient title and glow strip, large rounded cards |
+| Paper | warm light paper, coral ink, serif title |
+| Luna | retro XP-style: beige window, blue accents, Tahoma, glossy gradient buttons |
+| Aero | retro 7-style: pale glass blue, glossy gradient buttons |
+
+Everything except Light/Dark is drawn by `skins.py` on top of Tk's `clam` theme: rounded and glossy buttons, cards and
+switches are rendered at runtime with anti-aliased edges, so there are no image files.
 
 ## Which adb is used
 The app checks these in order and uses the first that works: the path set in Settings → the **Android SDK**
@@ -109,10 +127,18 @@ so finding phones works even when another tool started adb without mDNS.
 python -m pip install pyinstaller sv-ttk qrcode
 build.bat
 ```
-The scrcpy and adb binaries aren't stored in git. On the first build, `build.bat` runs `get-scrcpy.ps1`, which
-downloads the official [scrcpy 2.5 Windows release](https://github.com/Genymobile/scrcpy/releases/tag/v2.5) into `bin\`.
-To run from source without building: run `get-scrcpy.ps1` once, then `pythonw mirror.pyw`.
+The scrcpy and adb binaries aren't stored in git. On the first build, `build.bat` runs `python get_scrcpy.py`, which
+downloads the official [scrcpy 2.5 Windows release](https://github.com/Genymobile/scrcpy/releases/tag/v2.5) into `bin\`
+(standard library only). The archive is checked against GitHub's SHA-256 digest for the asset or, for older releases,
+the release's own `SHA256SUMS.txt`; with no published checksum it refuses. Options: `--version`, `--dest`.
+To run from source without building: run `python get_scrcpy.py` once, then `pythonw mirror.pyw`.
 Licenses are listed in `NOTICE.txt` (sv-ttk is MIT, qrcode is BSD).
+
+**App icon helper.** `assets/mirror-helper.dex` (3.6 KB, built from `android-helper/src/com/mirror/IconDump.java`) runs
+on the phone through `app_process`, like scrcpy's server. It reads each app's name and icon from the package service and
+the app's own APK resources. It is read-only. Mirror copies it to `/data/local/tmp` when the Apps page first loads. The `.dex`
+is committed, so building Mirror doesn't need Java. To rebuild it you need a JDK and the Android SDK: run
+`android-helper\build-helper.bat`.
 
 At runtime, settings are saved in `%APPDATA%\Mirror\config.json` (settings from the old *PhoneMirror* name are
 moved over automatically). The exe runs scrcpy and adb from `%LOCALAPPDATA%\Mirror\runtime-<version>\`, which it

@@ -34,6 +34,7 @@ except ImportError:
     qrcode = None
 
 from devtools import DevToolsMixin  # Logcat, Shell, Apps and Device pages
+import skins                         # Light/Dark (sv-ttk) + drawn custom skins
 
 APP = "Mirror"
 OLD_APP = "PhoneMirror"  # previous name: settings are migrated from it
@@ -1480,7 +1481,7 @@ class App(DevToolsMixin):
         self.qr_token = 0
         self.nearby = []
         self.scan_cancel = threading.Event()
-        self.pal = PALETTE["dark"]
+        self.pal = dict(skins.SV_PALETTE["dark"])
         self.usb = []              # phones Windows sees on USB (even with debugging off)
         self.usb_checked = False
         self.brand_auto = True     # until the user picks a brand on Get started
@@ -1493,6 +1494,9 @@ class App(DevToolsMixin):
         self.font = "Segoe UI Variable Text" if "Segoe UI Variable Text" in fams else "Segoe UI"
         self.font_display = "Segoe UI Variable Display" if "Segoe UI Variable Display" in fams else "Segoe UI"
         self.icon_font = "Segoe Fluent Icons" if "Segoe Fluent Icons" in fams else "Segoe MDL2 Assets"
+        self.mono = "Cascadia Mono" if "Cascadia Mono" in fams else "Consolas"
+        self.base_fonts = (self.font, self.font_display, self.mono)  # Light / Dark skins
+        self.skin = skins.resolve("System", False)
 
         root.title(APP)
         root.geometry("900x700")
@@ -1560,6 +1564,10 @@ class App(DevToolsMixin):
 
     def kill_proc(self, proc):
         kill_tree(proc)
+
+    @staticmethod
+    def asset_path(name):
+        return os.path.join(_base_dir(), "assets", name)
 
     def _startup(self):
         self._detect_adb()
@@ -1635,8 +1643,8 @@ class App(DevToolsMixin):
         self.side = tk.Frame(root, width=200)
         self.side.pack(side="left", fill="y")
         self.side.pack_propagate(False)
-        self.brand = tk.Label(self.side, text=APP, font=(self.font_display, 14, "bold"), anchor="w")
-        self.brand.pack(fill="x", padx=18, pady=(18, 14))
+        self.brand = tk.Canvas(self.side, height=56, highlightthickness=0, bd=0)  # drawn per skin
+        self.brand.pack(fill="x", pady=(6, 6))
         self.nav = {}
         for key, text in self.PAGES:
             item = NavItem(self.side, self, key, ICON[key], text)
@@ -1667,6 +1675,9 @@ class App(DevToolsMixin):
         self.dev_combo.bind("<<ComboboxSelected>>", lambda e: self._on_select())
         ttk.Button(pick, text=ICON["refresh"], style="Icon.TButton", width=3,
                    command=lambda: self.bg(self.refresh_devices)).pack(side="left", padx=(6, 0))
+        self.glow = tk.Canvas(main, height=1, highlightthickness=0, bd=0)  # gradient strip (rich skins)
+        self.glow.pack(fill="x", pady=(0, 8))
+        self.glow.bind("<Configure>", lambda e: self._draw_glow())
 
         self.pages_box = ttk.Frame(main, padding=(20, 4, 20, 0))
         self.pages_box.pack(fill="both", expand=True)
@@ -1691,8 +1702,8 @@ class App(DevToolsMixin):
                                relief="flat", borderwidth=0, padx=8, pady=6)
         self.log_box.pack(fill="x", pady=(4, 0))
         self.status_var = tk.StringVar()
-        ttk.Label(main, textvariable=self.status_var, style="Muted.TLabel",
-                  padding=(20, 6, 20, 8)).pack(fill="x")
+        ttk.Label(main, textvariable=self.status_var, style="Status.TLabel",
+                  padding=(20, 5, 20, 6)).pack(fill="x", pady=(6, 0))
 
     def card(self, parent, title=None, subtitle=None, **pack):
         c = ttk.Frame(parent, style="Card.TFrame", padding=(16, 12))
@@ -2048,14 +2059,17 @@ class App(DevToolsMixin):
     # ---------------------------------------------------------------- Settings page
     def _page_settings(self, parent):
         f = ttk.Frame(parent)
-        ap = self.card(f, "Appearance")
-        seg = ttk.Frame(ap)
-        seg.pack(anchor="w", pady=(6, 0))
-        self.theme_var = tk.StringVar(value=self.cfg.get("theme", "System"))
-        for name in ("System", "Light", "Dark"):
-            ttk.Radiobutton(seg, text=name, value=name, variable=self.theme_var, style="Toggle.TButton", width=9,
-                            command=lambda: (self._set_cfg("theme", self.theme_var.get()),
-                                             self.apply_theme(self.theme_var.get()))).pack(side="left", padx=(0, 4))
+        ap = self.card(f, "Skin")
+        grid = ttk.Frame(ap, style="Card.TFrame")
+        grid.pack(anchor="w", pady=(6, 4))
+        self.theme_tiles = {}
+        for i, name in enumerate(skins.ORDER):
+            cv = tk.Canvas(grid, width=114, height=66, highlightthickness=0, bd=0, cursor="hand2")
+            cv.grid(row=i // 5, column=i % 5, padx=(0, 8), pady=(0, 8))
+            cv.bind("<Button-1>", lambda e, n=name: self.pick_theme(n))
+            self.theme_tiles[name] = cv
+        self.theme_note = tk.StringVar()
+        ttk.Label(ap, textvariable=self.theme_note, style="Muted.TLabel").pack(anchor="w")
 
         a = self.card(f, "adb", "Order: path below > Android SDK (ANDROID_HOME / ANDROID_SDK_ROOT / Android Studio) "
                                 "> adb on PATH > built-in. The SDK's adb wins: it is the one Android Studio and "
@@ -2082,11 +2096,25 @@ class App(DevToolsMixin):
 
     # ================================================================ theme / nav
     def apply_theme(self, mode):
-        dark = mode == "Dark" or (mode == "System" and system_is_dark())
-        if sv_ttk:
-            sv_ttk.set_theme("dark" if dark else "light")
-        self.pal = pal = PALETTE["dark" if dark else "light"]
+        """Switch skin: sv-ttk for Light/Dark, a drawn clam theme for the others (skins.py)."""
+        skin = skins.resolve(mode, system_is_dark())
+        self.skin = skin
         st = ttk.Style()
+        if skin["engine"] == "sv":
+            if sv_ttk:
+                sv_ttk.set_theme(skin["base"])
+            self.font, self.font_display, self.mono = self.base_fonts
+        else:
+            f = skins.build_custom(self.root, skin)
+            self.font, self.font_display, self.mono = f["ui"], f["display"], f["mono"]
+        # sv-ttk's tk_setPalette stamps its colours onto every widget (ttk labels too); clear
+        # them so each skin's styles apply, and keep labels made later from getting stamped.
+        self.root.option_add("*TLabel.background", "", 80)
+        self.root.option_add("*TLabel.foreground", "", 80)
+        self._reset_ttk_colors(self.root)
+        self.pal = pal = {k: skin[k] for k in ("bg", "side", "hover", "sel", "accent", "accent2", "fg", "muted",
+                                               "field", "ok", "warn", "border", "on_accent")}
+        pal["dark"] = skin.get("dark", skin.get("base") == "dark")
         st.configure("Title.TLabel", font=(self.font_display, 17, "bold"))
         st.configure("Head.TLabel", font=(self.font, 11, "bold"))
         st.configure("Muted.TLabel", foreground=pal["muted"], font=(self.font, 9))
@@ -2097,20 +2125,102 @@ class App(DevToolsMixin):
         st.configure("Toggle.TButton", font=(self.font, 10))
         st.configure("TCheckbutton", font=(self.font, 10))
         st.configure("Treeview", rowheight=28, font=(self.font, 10))
+        st.configure("Apps.Treeview", rowheight=30, font=(self.font, 10))
         st.configure("Treeview.Heading", font=(self.font, 9, "bold"))
+        if skin.get("statusbar"):  # Developer: a blue status bar
+            st.configure("Status.TLabel", background=pal["accent"], foreground="#ffffff", font=(self.font, 9))
+        else:
+            st.configure("Status.TLabel", background=pal["bg"], foreground=pal["muted"], font=(self.font, 9))
+        self.root.configure(bg=pal["bg"])
         self.side.configure(bg=pal["side"])
-        for w in (self.brand, self.side_foot):
-            w.configure(bg=pal["side"], fg=pal["fg"] if w is self.brand else pal["muted"])
+        self.side_foot.configure(bg=pal["side"], fg=pal["muted"], font=(self.font, 8))
         for item in self.nav.values():
+            item.icon.configure(font=(self.icon_font, 13))
+            item.label.configure(font=(self.font, 10))
             item.paint()
-        self.log_box.configure(bg=pal["field"], fg=pal["muted"], insertbackground=pal["fg"])
+        self._draw_brand()
+        self._draw_glow()
+        self.log_box.configure(bg=pal["field"], fg=pal["muted"], insertbackground=pal["fg"], font=(self.mono, 9))
         self.phone_icon.configure(foreground=pal["accent"])
         self.tree.tag_configure("phone", foreground=pal["accent"])
         self.tree.tag_configure("adb", foreground=pal["ok"])
         self._update_setup()
         self.dev_theme()
+        self._draw_theme_tiles()
+        RemoteBar.ON = pal["accent"]
         self.root.update_idletasks()
-        set_titlebar_dark(self.root, dark)
+        set_titlebar_dark(self.root, pal["dark"])
+        self._skin_anim_start()
+
+    def _reset_ttk_colors(self, w):
+        for c in w.winfo_children():
+            if c.winfo_class().startswith("T"):  # ttk widgets: TLabel, TFrame, TButton, ...
+                for opt in ("background", "foreground"):
+                    try:
+                        if str(c.cget(opt)):
+                            c.configure(**{opt: ""})
+                    except tk.TclError:
+                        pass
+            self._reset_ttk_colors(c)
+
+    # ---- skin decorations
+    def _draw_brand(self, cursor_on=True):
+        s = self.skin
+        text = s.get("brand", APP) if s["engine"] == "custom" else APP
+        font = "Georgia" if s.get("serif_brand") else self.font_display
+        skins.draw_brand(self.brand, s, font, text, cursor_on)
+
+    def _draw_glow(self, phase=0.0):
+        s = self.skin
+        if s.get("gradient"):
+            self.glow.configure(height=3, bg=s["bg"])
+            self.glow.update_idletasks()
+            skins.draw_gradient(self.glow, max(self.glow.winfo_width(), 400), 3, s["accent"], s["accent2"], phase)
+        else:
+            self.glow.delete("all")
+            self.glow.configure(height=1, bg=self.pal.get("border", self.pal["bg"]))
+
+    def _skin_anim_start(self):
+        """Hacker: blinking cursor. Gamer: RGB-cycling nav bar and moving glow."""
+        self._anim_token = getattr(self, "_anim_token", 0) + 1
+        token, s = self._anim_token, self.skin
+        if not (s.get("cursor") or s.get("rgb")):
+            return
+        state = {"t": 0}
+
+        def tick():
+            if self.closing or token != self._anim_token:
+                return
+            state["t"] += 1
+            if s.get("cursor") and state["t"] % 6 == 0:
+                self._draw_brand(cursor_on=(state["t"] // 6) % 2 == 0)
+            if s.get("rgb"):
+                c = skins.hue_cycle(state["t"] / 90.0)
+                item = self.nav.get(self.page)
+                if item:
+                    item.bar.configure(bg=c)
+                    item.icon.configure(fg=c)
+                if state["t"] % 2 == 0:
+                    self._draw_glow(phase=state["t"] / 120.0)
+            self.root.after(90, tick)
+        self.root.after(90, tick)
+
+    def _draw_theme_tiles(self):
+        current = self.cfg.get("theme", "System")
+        for name, cv in getattr(self, "theme_tiles", {}).items():
+            sk = skins.resolve(name, system_is_dark())
+            if name == "System":
+                sk = dict(sk)
+                sk["name"] = "System"
+            skins.draw_preview(cv, sk, name == current, self.font)
+        if hasattr(self, "theme_note"):
+            sk = skins.SKINS.get(current)
+            self.theme_note.set("%s — %s" % (current, sk["tagline"]) if sk else
+                                "System — follows Windows light / dark")
+
+    def pick_theme(self, name):
+        self._set_cfg("theme", name)
+        self.apply_theme(name)
 
     def show_page(self, key):
         if self.page == key:

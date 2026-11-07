@@ -5,7 +5,7 @@ setlocal
 cd /d "%~dp0"
 if not exist bin\scrcpy.exe (
   echo bin\ is empty - downloading the official scrcpy 2.5 release...
-  powershell -NoProfile -ExecutionPolicy Bypass -File get-scrcpy.ps1 || exit /b 1
+  python get_scrcpy.py || exit /b 1
 )
 python -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --name Mirror --icon assets\icon.ico ^

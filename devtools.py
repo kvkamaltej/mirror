@@ -4,8 +4,10 @@ A mixin for mirror.App. It only uses what App provides (adb_run, popen_adb,
 kill_proc, bg, ui, log, card, wrap_label, need_device, selected, cfg, pal,
 fonts), so it has no import of mirror.pyw itself.
 """
+import base64
 import collections
 import datetime
+import json
 import os
 import re
 import subprocess
@@ -99,6 +101,8 @@ def parse_package_details(out):
 
 
 SHELL_TIMEOUT = 120  # seconds; longer jobs belong in the terminal
+ICON_PX = 24         # app icon size in the Apps list
+HELPER_REMOTE = "/data/local/tmp/mirror-helper.dex"
 
 SHELL_PRESETS = [
     "getprop ro.build.version.release",
@@ -160,6 +164,9 @@ class DevToolsMixin:
         self.sh_hist_pos = None
         self.adb_stopped = False
         self.apps = []
+        self.app_labels = {}       # package -> app name (from the phone)
+        self.icon_imgs = {}        # (package, versionCode) -> PhotoImage (kept alive here)
+        self.helper_pushed = set() # serials that already have mirror-helper.dex
 
     def mono_text(self, parent, height=10):
         box = ttk.Frame(parent)
@@ -178,13 +185,15 @@ class DevToolsMixin:
 
     def dev_theme(self):
         """Colours for the text panes (called from apply_theme)."""
-        dark = self.pal is not None and self.pal.get("bg") == "#1c1c1c"
+        dark = bool(self.pal.get("dark"))
+        mono = getattr(self, "mono", "Consolas")
+        skin_log = getattr(self, "skin", {}).get("logcolors", {})  # e.g. Hacker: shades of green
         for t in getattr(self, "dev_texts", []):
             t.configure(bg=self.pal["field"], fg=self.pal["fg"], insertbackground=self.pal["fg"],
-                        selectbackground=self.pal["accent"])
+                        selectbackground=self.pal["accent"], font=(mono, 9))
             for lvl, (d, l) in LOG_COLORS.items():
-                t.tag_configure("L" + lvl, foreground=d if dark else l)
-            t.tag_configure("cmd", foreground=self.pal["accent"], font=("Consolas", 9, "bold"))
+                t.tag_configure("L" + lvl, foreground=skin_log.get(lvl) or (d if dark else l))
+            t.tag_configure("cmd", foreground=self.pal["accent"], font=(mono, 9, "bold"))
             t.tag_configure("meta", foreground=self.pal["muted"])
             t.tag_configure("find", background="#7a5c00" if dark else "#fff3b0")
         for lb in getattr(self, "dev_lists", []):
@@ -578,11 +587,14 @@ class DevToolsMixin:
 
         box = ttk.Frame(f)
         box.pack(fill="both", expand=True)
-        self.app_tree = ttk.Treeview(box, columns=("pkg", "ver"), show="headings", height=9, selectmode="browse")
+        self.app_tree = ttk.Treeview(box, columns=("pkg", "ver"), show="tree headings", height=9, selectmode="browse",
+                                     style="Apps.Treeview")
+        self.app_tree.heading("#0", text="App", anchor="w")
         self.app_tree.heading("pkg", text="Package", anchor="w")
         self.app_tree.heading("ver", text="Version code", anchor="w")
-        self.app_tree.column("pkg", width=430, anchor="w")
-        self.app_tree.column("ver", width=120, anchor="w")
+        self.app_tree.column("#0", width=230, anchor="w")
+        self.app_tree.column("pkg", width=280, anchor="w")
+        self.app_tree.column("ver", width=100, anchor="w")
         sb = ttk.Scrollbar(box, orient="vertical", command=self.app_tree.yview)
         self.app_tree.configure(yscrollcommand=sb.set)
         self.app_tree.pack(side="left", fill="both", expand=True)
@@ -614,14 +626,105 @@ class DevToolsMixin:
             self.apps = parse_packages(out)
             self.ui(self._apps_show)
             self.ui(self.app_info.set, "%d apps. Double-click to launch." % len(self.apps))
+            self._icons_load(serial, list(self.apps))
         self.bg(work)
 
     def _apps_show(self):
         q = self.app_q.get().strip().lower()
         self.app_tree.delete(*self.app_tree.get_children())
-        for pkg, ver in self.apps:
-            if not q or q in pkg.lower():
-                self.app_tree.insert("", "end", iid=pkg, values=(pkg, ver))
+        apps = sorted(self.apps, key=lambda a: (self.app_labels.get(a[0]) or a[0]).lower())
+        for pkg, ver in apps:
+            label = self.app_labels.get(pkg, "")
+            if q and q not in pkg.lower() and q not in label.lower():
+                continue
+            img = self.icon_imgs.get((pkg, ver))
+            kw = {"image": img} if img else {}
+            self.app_tree.insert("", "end", iid=pkg, text="  " + (label or pkg.rsplit(".", 1)[-1]),
+                                 values=(pkg, ver), **kw)
+
+    # ---- app icons: drawn on the phone by assets/mirror-helper.dex (android-helper/), cached per version
+    def _icon_cache_dir(self):
+        d = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), self.APP_NAME, "icons")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _icons_load(self, serial, apps):
+        """Background: show cached icons, fetch the missing ones from the phone in batches."""
+        cache = self._icon_cache_dir()
+        labels_file = os.path.join(cache, "labels.json")
+        try:
+            with open(labels_file, encoding="utf-8") as fh:
+                disk_labels = json.load(fh)
+        except (OSError, ValueError):
+            disk_labels = {}
+        missing = []
+        for pkg, ver in apps:
+            key = "%s_%s" % (pkg, ver or "0")
+            png = os.path.join(cache, key + ".png")
+            if os.path.isfile(png) and key in disk_labels:
+                self.ui(self._icon_set, pkg, ver, png, disk_labels[key])
+            else:
+                missing.append((pkg, ver))
+        if not missing:
+            self.ui(self._apps_resort)
+            return
+        helper = self.asset_path("mirror-helper.dex")
+        if serial not in self.helper_pushed:
+            rc, out, err = self.adb_run("push", helper, HELPER_REMOTE, serial=serial, timeout=30)
+            if rc != 0:
+                self.log("App icons unavailable: could not copy the helper to the phone (%s)" % (out + err).strip()[-120:])
+                return
+            self.helper_pushed.add(serial)
+        vers = dict(missing)
+        for i in range(0, len(missing), 40):
+            batch = [p for p, _ in missing[i:i + 40]]
+            rc, out, err = self.adb_run("shell", "CLASSPATH=%s app_process / com.mirror.IconDump %d %s"
+                                        % (HELPER_REMOTE, ICON_PX, " ".join(batch)), serial=serial, timeout=60)
+            got = 0
+            for line in out.splitlines():
+                f = line.rstrip("\r").split("\t")
+                if len(f) != 3 or f[1] == "!" or f[0] not in vers:
+                    continue
+                try:
+                    data = base64.b64decode(f[2])
+                except ValueError:
+                    continue
+                key = "%s_%s" % (f[0], vers[f[0]] or "0")
+                png = os.path.join(cache, key + ".png")
+                with open(png, "wb") as fh:
+                    fh.write(data)
+                disk_labels[key] = f[1]
+                self.ui(self._icon_set, f[0], vers[f[0]], png, f[1])
+                got += 1
+            if not got and i == 0:
+                self.log("App icons unavailable on this phone: %s" % (err or out).strip()[-160:])
+                break
+        try:
+            with open(labels_file, "w", encoding="utf-8") as fh:
+                json.dump(disk_labels, fh)
+        except OSError:
+            pass
+        self.ui(self._apps_resort)
+
+    def _apps_resort(self):
+        """Names have arrived: re-sort the list by name, keeping the selection."""
+        sel = self._app_selected()
+        self._apps_show()
+        if sel and self.app_tree.exists(sel):
+            self.app_tree.selection_set(sel)
+            self.app_tree.see(sel)
+
+    def _icon_set(self, pkg, ver, png, label):
+        try:
+            img = tk.PhotoImage(file=png)
+        except tk.TclError:
+            return
+        self.icon_imgs[(pkg, ver)] = img
+        self.app_labels[pkg] = label
+        if self.app_tree.exists(pkg):
+            self.app_tree.item(pkg, image=img, text="  " + label)
+        elif not self.app_q.get().strip():
+            pass
 
     def _app_selected(self):
         sel = self.app_tree.selection()
