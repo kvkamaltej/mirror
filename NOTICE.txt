@@ -1,6 +1,6 @@
 Mirror bundles the following third-party software, unmodified:
 
-- scrcpy 2.5 (scrcpy.exe, scrcpy-server, icon.png)
+- scrcpy 2.5 (scrcpy.exe, scrcpy-server, icon.png - Mirror's own icon is assets/icon.png)
   Copyright (C) 2018 Genymobile, Copyright (C) 2018-2024 Romain Vimont
   Apache License 2.0 - https://github.com/Genymobile/scrcpy/blob/master/LICENSE
 

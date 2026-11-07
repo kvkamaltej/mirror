@@ -89,6 +89,10 @@ Pick one in **Settings → Skin**. Each tile is a live preview.
 | Skin | Look |
 |---|---|
 | System / Light / Dark | Windows 11 (sv-ttk); System follows Windows |
+| **Glass** | iOS-style frosted glass: the **real Windows 11 Acrylic blur** shows what's behind the window; panels are frosted tints with hairline edges, iOS blue accents and green switches |
+| **Neumorph** | soft UI: one base colour; cards and buttons raised by a white highlight top-left and a soft shadow bottom-right; pressed and selected look sunk in |
+| **Clay** | claymorphism: pastel, very rounded, puffy candy buttons with soft coloured drop shadows |
+| **Skeuo** | skeuomorphism, iOS 6-style: glossy gradient buttons with dark outlines and an embossed white edge |
 | Developer | editor greys, blue accents and a blue status bar, Cascadia Mono |
 | Hacker | terminal green on black, monospace everywhere, square corners, blinking `> mirror` cursor, green log levels |
 | Gamer | deep purple with neon magenta and cyan, Bahnschrift, RGB-cycling nav bar and moving gradient glow |
@@ -97,8 +101,17 @@ Pick one in **Settings → Skin**. Each tile is a live preview.
 | Luna | retro XP-style: beige window, blue accents, Tahoma, glossy gradient buttons |
 | Aero | retro 7-style: pale glass blue, glossy gradient buttons |
 
-Everything except Light/Dark is drawn by `skins.py` on top of Tk's `clam` theme: rounded and glossy buttons, cards and
-switches are rendered at runtime with anti-aliased edges, so there are no image files.
+Everything except Light/Dark is drawn by `skins.py` on top of Tk's `clam` theme: rounded, glossy and soft-shadowed
+buttons, cards and switches are rendered at runtime with anti-aliased edges, so there are no image files.
+
+**About Glass.** It needs Windows 11 with **Settings → Personalization → Colors → Transparency effects** turned on.
+Otherwise Windows draws the backdrop as flat grey, and Mirror's skin description says so. Windows also shows Acrylic as
+solid while the window isn't focused. Tk can't make a single widget translucent, so the glass is Windows' own
+blur behind the whole window. Tk's drawing is added on top of it: black is clear glass and dark greys are frosted tints. That's why
+Glass is a light-on-dark skin: dark text would disappear into the glass.
+
+The app icon is drawn by `android-helper/make_icon.py` (Pillow, run once) into `assets/icon.ico` and `assets/icon.png`.
+Mirror sets its own Windows app ID so the taskbar shows that icon, and scrcpy's mirror window uses it too.
 
 ## Which adb is used
 The app checks these in order and uses the first that works: the path set in Settings → the **Android SDK**

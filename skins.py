@@ -75,8 +75,46 @@ SKINS = {
         "brand": "Mirror", "gradient": True, "gloss": True,
         "btn_top": "#fbfbfb", "btn_bottom": "#d9dee5", "btn_border": "#707a86",
     },
+    # ---- morphism
+    "Glass": {
+        "engine": "custom", "dark": True, "tagline": "iOS-style frosted glass: live Windows 11 blur through the window",
+        # Windows 11 Acrylic shows through what Tk draws: black = clear glass, dark greys = frosted tints,
+        # so every colour here is a "light over glass" value and text is light.
+        "bg": "#0c0c10", "side": "#000000", "hover": "#1c1c24", "sel": "#2a2a34", "card": "#0c0c10",
+        "border": "#3c3c48", "accent": "#0a84ff", "accent2": "#5e5ce6", "on_accent": "#ffffff",
+        "fg": "#ffffff", "muted": "#a3a3b0", "field": "#17171e", "ok": "#30d158", "warn": "#ffd60a",
+        "fonts": ("Segoe UI Variable Text", "Segoe UI Variable Display", "Cascadia Mono"), "radius": 14,
+        "brand": "Mirror", "glass": True, "switch_on": "#30d158", "switch_knob": "#ffffff",
+    },
+    "Neumorph": {
+        "engine": "custom", "dark": False, "tagline": "Soft UI: raised and pressed-in surfaces",
+        "bg": "#e4e9f0", "side": "#e4e9f0", "hover": "#dbe1ea", "sel": "#d3dae5", "card": "#e4e9f0",
+        "border": "#d0d7e1", "accent": "#5b7cfa", "accent2": "#8f6bff", "on_accent": "#ffffff",
+        "fg": "#38415a", "muted": "#7a8599", "field": "#dfe4ec", "ok": "#2f9e6a", "warn": "#c17c00",
+        "fonts": ("Segoe UI Variable Text", "Segoe UI Variable Display", "Cascadia Mono"), "radius": 18,
+        "brand": "Mirror", "style": "neu", "shadow_dark": "#a7b3c4", "shadow_light": "#ffffff",
+        "toggle_sel_fg": "#5b7cfa",
+    },
+    "Clay": {
+        "engine": "custom", "dark": False, "tagline": "Claymorphism: pastel, puffy, candy buttons",
+        "bg": "#f4effd", "side": "#efe7fc", "hover": "#e8ddfb", "sel": "#dfd0fa", "card": "#f4effd",
+        "border": "#e2d6fa", "accent": "#ff5fa2", "accent2": "#8b6cff", "on_accent": "#ffffff",
+        "fg": "#3a2e5c", "muted": "#8a7fab", "field": "#ffffff", "ok": "#2fae6e", "warn": "#d88a00",
+        "fonts": ("Segoe UI Variable Text", "Segoe UI Variable Display", "Cascadia Mono"), "radius": 22,
+        "brand": "Mirror", "gradient": True, "style": "clay", "shadow_dark": "#cbb9f4", "btn_top": "#ffffff",
+    },
+    "Skeuo": {
+        "engine": "custom", "dark": False, "tagline": "Skeuomorphism: glossy, embossed, iOS 6-style",
+        "bg": "#cbd2da", "side": "#dfe4ea", "hover": "#d3dae2", "sel": "#bccbe0", "card": "#cbd2da",
+        "border": "#9aa6b3", "accent": "#3d6fc6", "accent2": "#7c98c8", "on_accent": "#ffffff",
+        "fg": "#1f2a37", "muted": "#566475", "field": "#ffffff", "ok": "#2f8a3d", "warn": "#a86b00",
+        "fonts": ("Segoe UI", "Segoe UI Semibold", "Consolas"), "radius": 10,
+        "brand": "Mirror", "gradient": True, "gloss": True, "style": "skeuo",
+        "btn_top": "#fdfdfd", "btn_bottom": "#d0d6dd", "btn_border": "#7d8896",
+    },
 }
-ORDER = ["System", "Light", "Dark", "Developer", "Hacker", "Gamer", "Aurora", "Paper", "Luna", "Aero"]
+ORDER = ["System", "Light", "Dark", "Glass", "Neumorph", "Clay", "Skeuo", "Developer", "Hacker", "Gamer",
+         "Aurora", "Paper", "Luna", "Aero"]
 
 # sv-ttk palettes (match sv-ttk's own colours)
 SV_PALETTE = {
@@ -140,19 +178,37 @@ def _fill_at(fill, t):
     return c
 
 
-def raster(w, h, shapes, outside):
-    """Draw anti-aliased rounded boxes into a PhotoImage.
+def shadow(x, y, w, h, r, color, blur, strength):
+    """A soft shadow / glow shape for raster(): a rounded box whose edge fades over `blur` px."""
+    return ("shadow", x, y, w, h, r, color, blur, strength)
 
-    shapes: [(x, y, w, h, radius, fill, border, border_width)] painted in order.
+
+def raster(w, h, shapes, outside, opaque=False):
+    """Draw anti-aliased rounded boxes (and soft shadows) into a PhotoImage.
+
+    shapes: [(x, y, w, h, radius, fill, border, border_width)] or shadow(...), painted in order.
     outside: colour used to blend the anti-aliased outer edge; pixels fully
-    outside every shape are transparent."""
+    outside every shape are transparent, unless opaque (then they are `outside`,
+    which soft shadows need to fade into)."""
     img = tk.PhotoImage(width=w, height=h)
     rows, clear = [], []
     for y in range(h):
         row = []
         for x in range(w):
-            col, alpha = None, 0.0
-            for (sx, sy, sw, sh, r, fill, border, bw) in shapes:
+            col, alpha = (outside, 1.0) if opaque else (None, 0.0)
+            for shape in shapes:
+                if shape[0] == "shadow":
+                    _, sx, sy, sw, sh, r, color, blur, strength = shape
+                    r = min(r, sw / 2.0, sh / 2.0)
+                    d = _sd_round_box(x + 0.5, y + 0.5, sx + sw / 2.0, sy + sh / 2.0, sw / 2.0, sh / 2.0,
+                                      max(r, 0.01))
+                    f = 1.0 if d <= 0 else max(0.0, 1.0 - d / float(blur))
+                    cov = strength * f * f
+                    if cov > 0:
+                        col = mix(col if col is not None else outside, color, cov)
+                        alpha = max(alpha, cov)
+                    continue
+                (sx, sy, sw, sh, r, fill, border, bw) = shape
                 r = min(r, sw / 2.0, sh / 2.0)
                 d = _sd_round_box(x + 0.5, y + 0.5, sx + sw / 2.0, sy + sh / 2.0, sw / 2.0, sh / 2.0, max(r, 0.01))
                 cov = max(0.0, min(1.0, 0.5 - d))
@@ -187,6 +243,101 @@ def _font(families, *alts):
         if f in have:
             return f
     return "TkDefaultFont"
+
+
+def _morph_images(s, im, fills, btn_border):
+    """Buttons, cards and switches for Neumorph / Clay / Skeuo (replaces entries of im).
+
+    Returns (button stretch border, button content padding, card stretch border).
+    Images that carry soft shadows are opaque (painted on the skin's background)."""
+    bg, acc = s["bg"], s["accent"]
+    style = s["style"]
+    dark = s.get("shadow_dark", mix(bg, "#000000", 0.25))
+    light = s.get("shadow_light", "#ffffff")
+    if style == "neu":
+        m, R, H = 6, 10, 28  # shadow margin, corner radius, face height
+        W = 2 * R + 12
+
+        def btn(face, raised=True, strong=False):
+            sh = ([shadow(m - 3, m - 3, W, H, R, light, 6, 0.95),
+                   shadow(m + 3, m + 3, W, H, R, dark, 7, 0.75 if strong else 0.55)] if raised
+                  else [shadow(m, m, W, H, R, dark, 2, 0.18)])
+            return raster(W + 2 * m, H + 2 * m, sh + [(m, m, W, H, R, face, face, 0)], bg, opaque=True)
+        up = gloss(mix(bg, "#ffffff", 0.35), mix(bg, "#000000", 0.02), False)
+        down = gloss(mix(bg, "#000000", 0.08), mix(bg, "#ffffff", 0.30), False)  # sunk in: dark top
+        aup = gloss(mix(acc, "#ffffff", 0.22), mix(acc, "#000000", 0.08), False)
+        im.update(btn=btn(up), btn_hover=btn(up, strong=True), btn_press=btn(down, raised=False),
+                  btn_dis=btn(bg), acc=btn(aup), acc_hover=btn(aup, strong=True),
+                  acc_press=btn(gloss(mix(acc, "#000000", 0.18), acc, False), raised=False),
+                  acc_dis=btn(mix(acc, bg, 0.5)), tog_sel=btn(down, raised=False))
+        cm, CR = 12, 18
+        CW = 2 * CR + 2 * cm + 10
+        im["card"] = raster(CW, CW, [shadow(cm - 5, cm - 5, CW - 2 * cm, CW - 2 * cm, CR, light, 12, 0.9),
+                                     shadow(cm + 6, cm + 6, CW - 2 * cm, CW - 2 * cm, CR, dark, 14, 0.5),
+                                     (cm, cm, CW - 2 * cm, CW - 2 * cm, CR, bg, bg, 0)], bg, opaque=True)
+        sw, sh = 44, 24
+        track_in = gloss(mix(bg, "#000000", 0.10), mix(bg, "#ffffff", 0.35), False)
+        knob = gloss(mix(bg, "#ffffff", 0.6), bg, False)
+        im["sw_off"] = raster(sw, sh, [(1, 1, sw - 2, sh - 2, 11, track_in, mix(bg, "#000000", 0.12), 1),
+                                       shadow(4, 6, 15, 15, 7.5, dark, 3, 0.55),
+                                       (4, 4, 15, 15, 7.5, knob, knob, 0)], bg, opaque=True)
+        im["sw_on"] = raster(sw, sh, [(1, 1, sw - 2, sh - 2, 11, gloss(mix(acc, "#000000", 0.12), acc, False),
+                                       acc, 0), shadow(sw - 19, 6, 15, 15, 7.5, mix(acc, "#000000", 0.4), 3, 0.5),
+                                      (sw - 19, 4, 15, 15, 7.5, knob, knob, 0)], bg, opaque=True)
+        im["sw_dis"] = im["sw_off"]
+        return (m + R, m + H // 2 - 1, m + R, m + H // 2 - 1), (m + R, m + 4, m + R, m + 4), cm + CR + 2
+    if style == "clay":
+        m, R, H = 7, 13, 28
+        W = 2 * R + 12
+        shade = dark
+
+        def btn(top, bottom, glow, pressed=False):
+            sh = [] if pressed else [shadow(m, m + 4, W, H, R, glow, 8, 0.6)]
+            rim = (m + 4, m + 2, W - 8, int(H * 0.45), max(R - 4, 2),
+                   gloss(mix(top, "#ffffff", 0.55), top, False), top, 0)  # puffy top highlight
+            return raster(W + 2 * m, H + 2 * m, sh + [(m, m + (2 if pressed else 0), W, H, R,
+                                                        gloss(top, bottom, False), bottom, 0), rim], bg, opaque=True)
+        white = s.get("btn_top", "#ffffff")
+        cand2 = s["accent2"]
+        im.update(btn=btn(white, mix(white, shade, 0.25), shade), btn_hover=btn(white, mix(white, acc, 0.2), acc),
+                  btn_press=btn(mix(white, shade, 0.3), white, shade, True), btn_dis=btn(white, white, bg),
+                  acc=btn(mix(acc, "#ffffff", 0.25), acc, mix(acc, "#000000", 0.1)),
+                  acc_hover=btn(mix(acc, "#ffffff", 0.4), mix(acc, cand2, 0.4), acc),
+                  acc_press=btn(acc, mix(acc, "#000000", 0.15), acc, True), acc_dis=btn(mix(acc, bg, 0.5),
+                                                                                         mix(acc, bg, 0.5), bg),
+                  tog_sel=btn(mix(cand2, "#ffffff", 0.25), cand2, mix(cand2, "#000000", 0.1)))
+        cm, CR = 12, 22
+        CW = 2 * CR + 2 * cm + 10
+        im["card"] = raster(CW, CW, [shadow(cm, cm + 8, CW - 2 * cm, CW - 2 * cm, CR, shade, 16, 0.55),
+                                     (cm, cm, CW - 2 * cm, CW - 2 * cm, CR, bg, mix(bg, "#ffffff", 0.85), 2)],
+                            bg, opaque=True)
+        sw, sh = 44, 24
+        im["sw_off"] = raster(sw, sh, [(1, 1, sw - 2, sh - 2, 11, mix(bg, shade, 0.5), mix(bg, shade, 0.5), 0),
+                                       shadow(4, 6, 15, 15, 7.5, shade, 3, 0.6), (4, 4, 15, 15, 7.5, "#ffffff",
+                                                                                   "#ffffff", 0)], bg, opaque=True)
+        im["sw_on"] = raster(sw, sh, [(1, 1, sw - 2, sh - 2, 11, gloss(mix(acc, "#ffffff", 0.2), acc, False),
+                                       acc, 0), shadow(sw - 19, 6, 15, 15, 7.5, mix(acc, "#000000", 0.3), 3, 0.6),
+                                      (sw - 19, 4, 15, 15, 7.5, "#ffffff", "#ffffff", 0)], bg, opaque=True)
+        im["sw_dis"] = im["sw_off"]
+        return (m + R, m + H // 2 - 1, m + R, m + H // 2 - 1), (m + R, m + 4, m + R, m + 4), cm + CR + 2
+    # skeuo: glossy fills with a dark outline and a white embossed edge underneath (iOS 6)
+    m, R, H = 2, 6, 28
+    W = 2 * R + 12
+
+    def btn(fill, border):
+        return raster(W + 2 * m, H + 2 * m, [(m, m + 1, W, H, R, "#ffffff", "#ffffff", 0),
+                                             (m, m, W, H, R, fill, border, 1)], bg, opaque=True)
+    acc_border = mix(acc, "#000000", 0.35)
+    im.update(btn=btn(fills["btn"], btn_border), btn_hover=btn(fills["btn_hover"], mix(btn_border, acc, 0.5)),
+              btn_press=btn(fills["btn_press"], btn_border), btn_dis=btn(fills["btn_dis"], mix(btn_border, bg, 0.5)),
+              acc=btn(fills["acc"], acc_border), acc_hover=btn(fills["acc_hover"], acc_border),
+              acc_press=btn(fills["acc_press"], acc_border), acc_dis=btn(fills["acc_dis"], mix(acc_border, bg, 0.5)))
+    im["tog_sel"] = im["acc"]
+    cm, CR = 3, 10
+    CW = 2 * CR + 2 * cm + 10
+    im["card"] = raster(CW, CW, [(cm, cm + 1, CW - 2 * cm, CW - 2 * cm, CR, "#ffffff", "#ffffff", 0),
+                                 (cm, cm, CW - 2 * cm, CW - 2 * cm, CR, s["card"], s["border"], 1)], bg, opaque=True)
+    return (m + R + 1, m + H // 2 - 1, m + R + 1, m + H // 2 - 1), (m + R + 4, m + 4, m + R + 4, m + 4), cm + CR + 2
 
 
 def build_custom(root, skin):
@@ -242,18 +393,24 @@ def build_custom(root, skin):
             "card": box(card, s["border"], rr=max(r, 2) + (2 if r >= 8 else 0),
                         w=2 * (max(r, 2) + 2) + 10, h=2 * (max(r, 2) + 2) + 10),
         }
-        # switch: track 40x22, knob
+        # switch: track 40x22, knob (iOS-style skins use green for "on")
         sw, sh = 40, 22
+        on = s.get("switch_on", s["accent"])
+        knob = s.get("switch_knob", s["on_accent"])
         im["sw_off"] = raster(sw, sh, [(0, 0, sw, sh, 11, s["field"], s["muted"], 1.2),
                                        (5, 5, 12, 12, 6, s["muted"], s["muted"], 0)], card)
-        im["sw_on"] = raster(sw, sh, [(0, 0, sw, sh, 11, s["accent"], s["accent"], 0),
-                                      (sw - 18, 4, 14, 14, 7, s["on_accent"], s["on_accent"], 0)], card)
+        im["sw_on"] = raster(sw, sh, [(0, 0, sw, sh, 11, on, on, 0),
+                                      (sw - 18, 4, 14, 14, 7, knob, knob, 0)], card)
         im["sw_dis"] = raster(sw, sh, [(0, 0, sw, sh, 11, s["field"], mix(s["muted"], card, 0.5), 1),
                                        (5, 5, 12, 12, 6, mix(s["muted"], card, 0.5), s["muted"], 0)], card)
-        imgs[name] = im
         vb = (bh_ // 2 - 1) if glossy else R + 2
         b = (R + 2, vb, R + 2, vb)
         p = (R + 4, 4, R + 4, 4)  # content inset (independent of the stretch border)
+        cb = max(r, 2) + 4
+        if s.get("style") in ("neu", "clay", "skeuo"):
+            b, p, cb = _morph_images(s, im, fills, btn_border)
+        im.setdefault("tog_sel", im["acc"])
+        imgs[name] = im
         st.element_create("Skin.Button.border", "image", im["btn"], ("disabled", im["btn_dis"]),
                           ("pressed", im["btn_press"]), ("active", im["btn_hover"]),
                           border=b, padding=p, sticky="nsew")
@@ -261,9 +418,9 @@ def build_custom(root, skin):
                           ("pressed", im["acc_press"]), ("active", im["acc_hover"]),
                           border=b, padding=p, sticky="nsew")
         st.element_create("Skin.Toggle.border", "image", im["btn"], ("disabled", im["btn_dis"]),
-                          ("selected", im["acc"]), ("pressed", im["btn_press"]), ("active", im["btn_hover"]),
+                          ("selected", im["tog_sel"]), ("pressed", im["btn_press"]), ("active", im["btn_hover"]),
                           border=b, padding=p, sticky="nsew")
-        st.element_create("Skin.Card.border", "image", im["card"], border=max(r, 2) + 4, sticky="nsew")
+        st.element_create("Skin.Card.border", "image", im["card"], border=cb, sticky="nsew")
         st.element_create("Skin.Switch.indicator", "image", im["sw_off"], ("disabled", im["sw_dis"]),
                           ("selected", im["sw_on"]), sticky="")
         label = ("Button.padding", {"sticky": "nsew", "children": [("Button.label", {"sticky": "nsew"})]})
@@ -292,7 +449,7 @@ def build_custom(root, skin):
                  font=(ui, 10, "bold") if s["name"] in ("Gamer", "Hacker") else (ui, 10))
     st.map("Accent.TButton", foreground=[("disabled", mix(s["on_accent"], bg, 0.4))])
     st.configure("Toggle.TButton", foreground=fg, padding=pad, anchor="center")
-    st.map("Toggle.TButton", foreground=[("selected", s["on_accent"]), ("disabled", muted)])
+    st.map("Toggle.TButton", foreground=[("selected", s.get("toggle_sel_fg", s["on_accent"])), ("disabled", muted)])
     st.configure("Icon.TButton", padding=(6, 4))
     st.configure("Switch.TCheckbutton", background=card, foreground=fg, padding=(2, 2))
     st.map("Switch.TCheckbutton", foreground=[("disabled", muted)], background=[("active", card)])
@@ -365,21 +522,42 @@ def draw_preview(canvas, skin, selected, label_font):
     w, h = int(canvas["width"]), int(canvas["height"])
     canvas.delete("all")
     bg, side, acc = skin["bg"], skin["side"], skin["accent"]
+    border = skin.get("border", skin["muted"])
     canvas.configure(bg=bg)
-    canvas.create_rectangle(0, 0, 26, h, fill=side, width=0)
+    if skin.get("glass"):  # hint of what shows through the glass
+        for i, c in enumerate(("#ff375f", "#0a84ff", "#30d158")):
+            x = w * (0.35 + 0.22 * i)
+            canvas.create_oval(x - 16, h * 0.15, x + 16, h * 0.15 + 32, fill=mix(c, bg, 0.55), width=0)
+    sb = int(w * 0.22)
+    canvas.create_rectangle(0, 0, sb, h, fill=side, width=0)
     for i in range(4):
-        y = 12 + i * 11
-        canvas.create_rectangle(6, y, 20, y + 5, fill=acc if i == 1 else skin["muted"], width=0)
+        y = 8 + i * 8
+        canvas.create_rectangle(4, y, sb - 4, y + 3, fill=acc if i == 1 else skin["muted"], width=0)
+    x0 = sb + 6
     if skin.get("gradient"):
-        for i in range(20):
-            canvas.create_rectangle(26 + i * (w - 26) / 20, 0, 26 + (i + 1) * (w - 26) / 20 + 1, 3,
-                                    fill=mix(acc, skin["accent2"], i / 19.0), width=0)
-    canvas.create_rectangle(34, 10, w - 10, 14, fill=skin["fg"], width=0)
-    canvas.create_rectangle(34, 19, w - 30, 22, fill=skin["muted"], width=0)
-    canvas.create_rectangle(34, 29, w - 10, h - 16, outline=skin.get("border", skin["muted"]), width=1)
-    canvas.create_rectangle(40, 35, 72, 44, fill=acc, width=0)
-    canvas.create_rectangle(78, 35, w - 16, 44, outline=skin.get("border", skin["muted"]), width=1)
-    canvas.create_text(w / 2 + 12, h - 8, text=skin["name"], fill=skin["fg"], font=(label_font, 8, "bold"))
+        for i in range(16):
+            canvas.create_rectangle(sb + i * (w - sb) / 16.0, 0, sb + (i + 1) * (w - sb) / 16.0 + 1, 2,
+                                    fill=mix(acc, skin["accent2"], i / 15.0), width=0)
+    canvas.create_rectangle(x0, 7, w - 8, 10, fill=skin["fg"], width=0)
+    canvas.create_rectangle(x0, 13, w - 20, 15, fill=skin["muted"], width=0)
+    style = skin.get("style")
+    cy0, cy1 = 20, h - 13
+    if style == "neu":  # raised card: light top-left, shadow bottom-right
+        canvas.create_rectangle(x0 + 2, cy0 + 2, w - 6, cy1 + 2, fill=skin.get("shadow_dark", border), width=0)
+        canvas.create_rectangle(x0 - 1, cy0 - 1, w - 9, cy1 - 1, fill="#ffffff", width=0)
+        canvas.create_rectangle(x0, cy0, w - 8, cy1, fill=bg, width=0)
+    elif style == "clay":
+        canvas.create_rectangle(x0 + 1, cy0 + 3, w - 7, cy1 + 3, fill=skin.get("shadow_dark", border), width=0)
+        canvas.create_rectangle(x0, cy0, w - 8, cy1, fill=bg, outline="#ffffff", width=1)
+    else:
+        canvas.create_rectangle(x0, cy0, w - 8, cy1, outline=border, width=1,
+                                fill=mix(bg, "#ffffff", 0.06) if skin.get("glass") else "")
+    bx1 = x0 + int((w - 8 - x0) * 0.45)
+    canvas.create_rectangle(x0 + 4, cy0 + 5, bx1, cy0 + 12, fill=acc, width=0)
+    if skin.get("gloss"):
+        canvas.create_rectangle(x0 + 4, cy0 + 5, bx1, cy0 + 8, fill=mix(acc, "#ffffff", 0.45), width=0)
+    canvas.create_rectangle(bx1 + 4, cy0 + 5, w - 12, cy0 + 12, outline=border, width=1)
+    canvas.create_text(x0 + (w - x0) / 2 - 4, h - 6, text=skin["name"], fill=skin["fg"], font=(label_font, 7, "bold"))
     if selected:
         canvas.create_rectangle(1, 1, w - 2, h - 2, outline=acc, width=3)
 

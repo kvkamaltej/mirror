@@ -1501,8 +1501,10 @@ class App(DevToolsMixin):
         root.title(APP)
         root.geometry("900x700")
         root.minsize(820, 660)
-        try:
-            root.iconbitmap(os.path.join(_base_dir(), "assets", "icon.ico"))
+        try:  # .ico for the title bar / taskbar, plus a 256 px PNG so large icons stay sharp
+            root.iconbitmap(default=self.asset_path("icon.ico"))
+            self._icon_png = tk.PhotoImage(file=self.asset_path("icon.png"))
+            root.iconphoto(True, self._icon_png)
         except tk.TclError:
             pass
 
@@ -2064,12 +2066,12 @@ class App(DevToolsMixin):
         grid.pack(anchor="w", pady=(6, 4))
         self.theme_tiles = {}
         for i, name in enumerate(skins.ORDER):
-            cv = tk.Canvas(grid, width=114, height=66, highlightthickness=0, bd=0, cursor="hand2")
-            cv.grid(row=i // 5, column=i % 5, padx=(0, 8), pady=(0, 8))
+            cv = tk.Canvas(grid, width=84, height=58, highlightthickness=0, bd=0, cursor="hand2")
+            cv.grid(row=i // 7, column=i % 7, padx=(0, 6), pady=(0, 6))
             cv.bind("<Button-1>", lambda e, n=name: self.pick_theme(n))
             self.theme_tiles[name] = cv
         self.theme_note = tk.StringVar()
-        ttk.Label(ap, textvariable=self.theme_note, style="Muted.TLabel").pack(anchor="w")
+        self.wrap_label(ap, textvariable=self.theme_note, style="Muted.TLabel").pack(fill="x")
 
         a = self.card(f, "adb", "Order: path below > Android SDK (ANDROID_HOME / ANDROID_SDK_ROOT / Android Studio) "
                                 "> adb on PATH > built-in. The SDK's adb wins: it is the one Android Studio and "
@@ -2150,7 +2152,39 @@ class App(DevToolsMixin):
         RemoteBar.ON = pal["accent"]
         self.root.update_idletasks()
         set_titlebar_dark(self.root, pal["dark"])
+        self._set_glass(bool(skin.get("glass")))
         self._skin_anim_start()
+
+    def _set_glass(self, on):
+        """Glass skin: Windows 11 Acrylic behind the window (live blur of what is behind it).
+
+        Tk draws with GDI, which the compositor adds on top of the blur: black is clear glass,
+        dark greys are frosted tints - which is why the Glass palette is all light-on-dark."""
+        if not IS_WIN:
+            return
+        try:
+            import ctypes
+
+            class MARGINS(ctypes.Structure):
+                _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
+            hwnd = int(self.root.wm_frame(), 16)
+            m = MARGINS(-1, -1, -1, -1) if on else MARGINS(0, 0, 0, 0)
+            ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(m))
+            v = ctypes.c_int(3 if on else 1)  # DWMWA_SYSTEMBACKDROP_TYPE: 3 = Acrylic, 1 = none
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(v), ctypes.sizeof(v))
+        except Exception:
+            pass
+
+    @staticmethod
+    def transparency_on():
+        """Windows' 'Transparency effects' switch (Glass shows a flat colour without it)."""
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+                return winreg.QueryValueEx(k, "EnableTransparency")[0] != 0
+        except OSError:
+            return True
 
     def _reset_ttk_colors(self, w):
         for c in w.winfo_children():
@@ -2215,8 +2249,11 @@ class App(DevToolsMixin):
             skins.draw_preview(cv, sk, name == current, self.font)
         if hasattr(self, "theme_note"):
             sk = skins.SKINS.get(current)
-            self.theme_note.set("%s — %s" % (current, sk["tagline"]) if sk else
-                                "System — follows Windows light / dark")
+            note = "%s — %s" % (current, sk["tagline"]) if sk else "System — follows Windows light / dark"
+            if sk and sk.get("glass") and not self.transparency_on():
+                note += ". Windows' Transparency effects are off, so the glass shows flat: turn them on in " \
+                        "Settings › Personalization › Colors."
+            self.theme_note.set(note)
 
     def pick_theme(self, name):
         self._set_cfg("theme", name)
@@ -2379,6 +2416,7 @@ class App(DevToolsMixin):
         args, quality = self.scrcpy_args(serial)
         env = adb_env()
         env["ADB"] = self.adb  # scrcpy must use the same adb as we do
+        env["SCRCPY_ICON_PATH"] = self.asset_path("icon.png")  # Mirror's icon on the mirror window
         try:
             proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, creationflags=NO_WINDOW, env=env, cwd=BIN)
@@ -2999,6 +3037,11 @@ def main():
         try:  # crisp text on high-DPI screens
             import ctypes
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            pass
+        try:  # our own taskbar identity: Mirror's icon and grouping, not python's / a generic one
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Mirror.PhoneMirror.App")
         except Exception:
             pass
     root = tk.Tk()
