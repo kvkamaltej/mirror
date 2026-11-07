@@ -1037,6 +1037,7 @@ class RemoteBar:
           "up": 0x26, "down": 0x28}
     # key, glyph, tooltip, group, keep-priority (lower stays on the bar longer)
     BUTTONS = [
+        ("hide", "", "Minimize controls", -1, 0),
         ("back", "", "Back", 0, 1),
         ("home", "", "Home", 0, 2),
         ("recents", "", "Recent apps", 0, 6),
@@ -1075,6 +1076,7 @@ class RemoteBar:
         self.layout_key = None
         self.btn = {}
         self.cell = None
+        self.collapsed = bool(app.cfg.get("bar_collapsed"))  # minimized to a small handle
 
         self.top = tk.Toplevel(app.root)
         self.top.withdraw()
@@ -1101,6 +1103,8 @@ class RemoteBar:
 
     def _visible_keys(self, length, horizontal):
         """Which buttons fit along `length` px; the rest go into More."""
+        if self.collapsed:
+            return ["show"]
         cw, ch = self._measure()
         step = cw if horizontal else ch
         room = max(4, int((length - 24) // step))
@@ -1108,7 +1112,7 @@ class RemoteBar:
         if len(keys) <= room:
             return keys
         by_priority = sorted(self.BUTTONS, key=lambda b: b[4])
-        keep = {b[0] for b in by_priority[:room]} | {"more", "stop", "full"}
+        keep = {b[0] for b in by_priority[:room]} | {"hide", "more", "stop", "full"}
         return [k for k in keys if k in keep]
 
     def _layout(self, keys, horizontal):
@@ -1119,6 +1123,18 @@ class RemoteBar:
         side = "left" if horizontal else "top"
         prev_group = None
         f = self.app.icon_font
+        if keys == ["show"]:  # minimized: one handle that brings the controls back
+            self.box.configure(padx=3, pady=3)
+            b = tk.Label(self.box, text="", font=(f, 13), width=2, pady=5, padx=1, bg=self.BG,
+                         fg=self.ON, cursor="hand2")
+            b.pack()
+            b.bind("<Button-1>", lambda e: self.action("show"))
+            b.bind("<Enter>", lambda e, w=b: (w.configure(bg=self.HOVER), self._tip(w, "Show controls")))
+            b.bind("<Leave>", lambda e, w=b: (w.configure(bg=self.BG), self._tip(None, None)))
+            self.btn = {"show": b}
+            self.hidden_keys = []
+            self.top.update_idletasks()
+            return
         for key, glyph, tip, group, _ in self.BUTTONS:
             if key not in keys:
                 continue
@@ -1263,9 +1279,20 @@ class RemoteBar:
             "full": self.toggle_full,
             "more": self.show_more,
             "stop": lambda: app.stop_mirror(self.serial),
+            "hide": lambda: self.set_collapsed(True),
+            "show": lambda: self.set_collapsed(False),
         }
         self._tip(None, None)
         acts[key]()
+
+    def set_collapsed(self, on):
+        """Minimize the controls to a small handle (or bring them back); remembered."""
+        self.collapsed = on
+        self.app._set_cfg("bar_collapsed", on)
+        if on and self.keyboard:
+            self.keyboard.close()
+        self.layout_key = None  # re-layout on the next dock tick
+        self.last_geo = None
 
     def press(self, key, keycode, fallback=None):
         """scrcpy shortcut (fast); adb keyevent if the shortcut can't be delivered."""

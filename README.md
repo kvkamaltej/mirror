@@ -41,6 +41,8 @@ Not supported yet. See [docs/cross-platform-plan.md](docs/cross-platform-plan.md
 - **Remote bar** (while mirroring): a strip of icons docked beside the phone window that moves with it.
   It floats over the right edge in full screen, where it fades out after 3 s without mouse movement and
   comes back when the mouse moves. It hides when the window is minimised.
+  **Minimize (—)** at the top shrinks the bar to a small **≡** handle that stays docked and follows the window; click
+  it to bring the controls back. Mirror remembers which way you left it.
   Buttons: Back · Home · Recent apps | Volume up/down · Power | Rotate · Screen off/on · Screenshot |
   Keep on top · **Full screen on/off** | **Stop**. The buttons send scrcpy's Alt shortcuts, so they respond instantly.
   If those can't be delivered, the phone keys fall back to adb. Shortcuts are only sent when the mirror
