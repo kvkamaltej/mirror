@@ -60,6 +60,26 @@ Not supported yet. See [docs/cross-platform-plan.md](docs/cross-platform-plan.md
   to find a Wireless-debugging port you don't know. Only scan networks you own or manage.
 - **Tools:** phone buttons, rotate, screenshot, type text on the phone, install APKs
   (or drop them onto the window).
+- **Logcat:** a live log stream, coloured by level, with filters for **level** (Verbose…Fatal), **buffer**
+  (main, system, crash, events, radio, all), **app** (by package name; it keeps following the app when it restarts
+  and gets a new process ID), **tags** (comma-separated) and **regex** (run on the phone). **Find** narrows and
+  highlights what's shown without restarting the stream. Pause, Clear view, Clear phone log, and Save… (a `.txt` of
+  what's shown). The last 20,000 lines are kept.
+- **Shell:** run `adb shell` commands with streaming output, history (Up/Down) and a list of common commands.
+  Each command stops after 2 minutes or 2 MB of output; **Stop** ends it sooner. *Open adb shell in a terminal* opens
+  a real console for interactive programs (adb on PATH, `ANDROID_SERIAL` set to the selected phone).
+- **Apps:** the installed apps with version codes (system apps optional) and search. Launch (or double-click),
+  Force stop, Logcat for app, App info on the phone, **Clear data…** and **Uninstall…** (both ask first). Selecting an
+  app shows its version, target/min SDK, last update and whether it's running.
+- **Device:**
+  - **Details:** model, Android and SDK, security patch, CPU, screen size and density, Wi-Fi IP, storage, memory, battery.
+  - **Developer toggles:** show taps, pointer location, layout bounds, animations off, dark mode, large text.
+    Mirror reads each setting back after changing it, and reports when a phone refuses one.
+  - **Open on the phone:** a web address or a deep link (`myapp://orders/42`).
+  - **Port forwarding:** reverse (the phone's `localhost:port` reaches this PC: local backend, dev server) and
+    forward (this PC's port reaches the phone), with a list of what's active.
+  - **adb server:** Restart, **Stop / Start** (while stopped, Mirror stops polling so it doesn't start adb again;
+    use this when another tool needs adb to itself), and Open terminal.
 - **Settings:** theme, which adb to use, and the folder for screenshots and recordings.
 
 ## Which adb is used

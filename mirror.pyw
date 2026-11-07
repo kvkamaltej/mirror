@@ -33,6 +33,8 @@ try:
 except ImportError:
     qrcode = None
 
+from devtools import DevToolsMixin  # Logcat, Shell, Apps and Device pages
+
 APP = "Mirror"
 OLD_APP = "PhoneMirror"  # previous name: settings are migrated from it
 VERSION = "3.0.0"
@@ -150,6 +152,7 @@ KEYS = {
 
 # Segoe Fluent Icons / MDL2 glyphs
 ICON = {
+    "logcat": "", "shell": "", "apps": "", "device": "",
     "setup": "", "mirror": "", "connect": "", "scan": "", "tools": "",
     "settings": "", "phone": "", "refresh": "",
 }
@@ -1426,9 +1429,11 @@ class RemoteBar:
 
 
 # =========================================================================== app
-class App:
+class App(DevToolsMixin):
     PAGES = [("setup", "Get started"), ("mirror", "Mirror"), ("connect", "Wireless"),
-             ("scan", "Scan network"), ("tools", "Tools"), ("settings", "Settings")]
+             ("scan", "Scan network"), ("tools", "Tools"), ("logcat", "Logcat"), ("shell", "Shell"),
+             ("apps", "Apps"), ("device", "Device"), ("settings", "Settings")]
+    APP_NAME = APP
 
     def __init__(self, root):
         self.root = root
@@ -1453,6 +1458,9 @@ class App:
         self.usb_checked = False
         self.brand_auto = True     # until the user picks a brand on Get started
         self.phone_link = None
+        self.dev_texts = []        # text panes styled by dev_theme()
+        self.dev_lists = []        # list boxes styled by dev_theme()
+        self._dev_init()
 
         fams = set(tkfont.families(root))
         self.font = "Segoe UI Variable Text" if "Segoe UI Variable Text" in fams else "Segoe UI"
@@ -1517,6 +1525,15 @@ class App:
         cmd = [self.adb] + (["-s", serial] if serial else []) + list(args)
         return run(cmd, timeout=timeout, binary=binary, env=adb_env())
 
+    def popen_adb(self, *args, serial=None):
+        """A streaming adb process (stdout + stderr in one pipe), no console window."""
+        cmd = [self.adb] + (["-s", serial] if serial else []) + list(args)
+        return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                creationflags=NO_WINDOW, env=adb_env())
+
+    def kill_proc(self, proc):
+        kill_tree(proc)
+
     def _startup(self):
         self._detect_adb()
         self.adb_run("start-server", timeout=30)
@@ -1526,6 +1543,9 @@ class App:
         self.ui(self._update_setup)
         first = True
         while not self.closing:
+            if self.adb_stopped:  # stopped on the Device page: don't start it again by polling
+                time.sleep(1)
+                continue
             self.refresh_devices()
             # no usable phone over adb? look at USB the Windows way (works with debugging off)
             if not any(d["state"] == "device" for d in self.devices.values()):
@@ -1560,7 +1580,7 @@ class App:
         self.ui(self._update_status_bar)
 
     def refresh_devices(self):
-        if not self.adb or not self.refresh_lock.acquire(blocking=False):
+        if not self.adb or self.adb_stopped or not self.refresh_lock.acquire(blocking=False):
             return
         try:
             rc, out, err = self.adb_run("devices", "-l", timeout=15)
@@ -1629,6 +1649,10 @@ class App:
             "connect": self._page_connect(self.pages_box),
             "scan": self._page_scan(self.pages_box),
             "tools": self._page_tools(self.pages_box),
+            "logcat": self._page_logcat(self.pages_box),
+            "shell": self._page_shell(self.pages_box),
+            "apps": self._page_apps(self.pages_box),
+            "device": self._page_device(self.pages_box),
             "settings": self._page_settings(self.pages_box),
         }
 
@@ -2055,6 +2079,7 @@ class App:
         self.tree.tag_configure("phone", foreground=pal["accent"])
         self.tree.tag_configure("adb", foreground=pal["ok"])
         self._update_setup()
+        self.dev_theme()
         self.root.update_idletasks()
         set_titlebar_dark(self.root, dark)
 
@@ -2069,6 +2094,13 @@ class App:
             item.paint()
         if key == "connect":
             self.bg(self._nearby_loop)
+        ready = self.devices.get(self.selected(), {}).get("state") == "device" and not self.adb_stopped
+        if key == "apps" and not self.apps and ready:
+            self.apps_refresh()
+        if key == "device":
+            self._adb_state_show()
+            if ready:
+                self.dev_refresh()
 
     # ================================================================ UI state
     def selected(self):
@@ -2804,6 +2836,7 @@ class App:
         if self.procs and not messagebox.askyesno(APP, "Stop mirroring and quit?"):
             return
         self.closing = True
+        self.dev_close()
         self.scan_cancel.set()
         self.qr_token += 1
         self.qr_progress.stop()
