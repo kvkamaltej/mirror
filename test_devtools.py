@@ -17,7 +17,8 @@ class Helpers(unittest.TestCase):
     def test_logcat_args(self):
         self.assertEqual(d.logcat_args("W", tail=0), ["logcat", "-v", "threadtime", "*:W"])
         a = d.logcat_args("D", "crash", "ActivityManager, flutter", "user (id|name)", 100)
-        self.assertEqual(a, ["logcat", "-v", "threadtime", "-T", "100", "-b", "crash", "-e", "'user (id|name)'",
+        # regex unquoted: `adb logcat` quotes each argument for the phone itself
+        self.assertEqual(a, ["logcat", "-v", "threadtime", "-T", "100", "-b", "crash", "-e", "user (id|name)",
                              "ActivityManager:D", "flutter:D", "*:S"])
         for bad in (dict(level="X"), dict(buffer="nope"), dict(tags="bad tag;rm"), dict(regex="x" * 300)):
             with self.assertRaises(ValueError):

@@ -48,7 +48,9 @@ def logcat_args(level="V", buffer="", tags="", regex="", tail=500):
     if regex:
         if len(regex) > 200 or "\n" in regex:
             raise ValueError("regex too long")
-        args += ["-e", sh_quote(regex)]
+        # no quoting here: these args go to `adb logcat`, which quotes each argument for the
+        # phone's shell itself (unlike `adb shell CMD`); extra quotes would become part of the regex
+        args += ["-e", regex]
     tag_list = [t.strip() for t in tags.replace(";", ",").split(",") if t.strip()]
     for t in tag_list:
         if not TAG_RE.match(t):
@@ -150,7 +152,7 @@ class DevToolsMixin:
         self.lc_proc = None
         self.lc_lines = collections.deque(maxlen=20000)
         self.lc_pending = collections.deque()
-        self.lc_pids = None        # set of pids when following an app
+        self.lc_state = {"pids": None}  # current stream's app filter (pids of the followed app)
         self.lc_paused = False
         self.lc_serial = None
         self.sh_proc = None
@@ -304,19 +306,23 @@ class DevToolsMixin:
             self.cfg[k] = v
         self._set_cfg("lc_level", self.lc_level.get())
         self.lc_serial = serial
-        self.lc_pids = set() if pkg else None
         self.lc_pkg_now = pkg
         try:
             proc = self.popen_adb(*args, serial=serial)
         except OSError as e:
             self.log("Logcat failed to start: %s" % e)
             return
+        # Per-stream state: a stopped stream's threads can still be finishing, and
+        # must never touch the new stream's app filter or queue.
+        state = {"pids": set() if pkg else None}
+        self.lc_state = state
+        self.lc_pending.clear()
         self.lc_proc = proc
         self.lc_btn.configure(text="Stop")
-        self._lc_meta("logcat started: %s" % " ".join(args[3:] if args[2] == "threadtime" else args))
-        self.bg(self._lc_read, proc)
+        self._lc_meta("logcat started: %s" % " ".join(args[3:]))
+        self.bg(self._lc_read, proc, state)
         if pkg:
-            self.bg(self._lc_follow, proc, serial, pkg)
+            self.bg(self._lc_follow, proc, state, serial, pkg)
 
     def lc_stop(self):
         p, self.lc_proc = self.lc_proc, None
@@ -325,31 +331,38 @@ class DevToolsMixin:
             self._lc_meta("logcat stopped")
         self.lc_btn.configure(text="Start")
 
-    def _lc_read(self, proc):
+    def _lc_read(self, proc, state):
         for raw in iter(proc.stdout.readline, b""):
             if proc is not self.lc_proc:
                 break
             line = raw.decode("utf-8", "replace").rstrip("\r\n")
             if not line:
                 continue
+            if line.startswith("--------- "):  # logcat's own "beginning of main" markers
+                if state["pids"] is None and proc is self.lc_proc:
+                    self.lc_pending.append(("S", line))
+                continue
             pid, level = parse_line(line)
-            pids = self.lc_pids
+            pids = state["pids"]
             if pids is not None and (pid is None or pid not in pids):
                 continue
-            self.lc_pending.append((level or "V", line))
+            if proc is self.lc_proc:
+                self.lc_pending.append((level or "V", line))
         rc = proc.wait()
         if proc is self.lc_proc:  # ended by itself (phone unplugged, bad regex, ...)
             self.lc_proc = None
             self.ui(lambda: (self.lc_btn.configure(text="Start"),
                              self._lc_meta("logcat ended (exit %s)" % rc)))
 
-    def _lc_follow(self, proc, serial, pkg):
+    def _lc_follow(self, proc, state, serial, pkg):
         """Keep the set of pids of pkg current, so the filter survives app restarts."""
         last = None
         while proc is self.lc_proc:
             rc, out, _ = self.adb_run("shell", "pidof", pkg, serial=serial, timeout=10)
+            if proc is not self.lc_proc:
+                break  # stream stopped while pidof ran
             pids = {int(x) for x in out.split() if x.isdigit()}
-            self.lc_pids = pids
+            state["pids"] = pids
             if pids != last:
                 if not pids:
                     self.ui(self._lc_meta, "%s is not running — waiting for it to start" % pkg)
@@ -409,6 +422,7 @@ class DevToolsMixin:
 
     def lc_clear_view(self):
         self.lc_lines.clear()
+        self.lc_pending.clear()
         self.text_clear(self.lc_text)
 
     def lc_clear_device(self):

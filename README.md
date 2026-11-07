@@ -83,8 +83,14 @@ Not supported yet. See [docs/cross-platform-plan.md](docs/cross-platform-plan.md
 - **Settings:** theme, which adb to use, and the folder for screenshots and recordings.
 
 ## Which adb is used
-The app checks these in order and uses the first that works: the path set in Settings → `adb` on PATH →
-`ANDROID_HOME` / `ANDROID_SDK_ROOT` → the Android Studio SDK → the built-in adb.
+The app checks these in order and uses the first that works: the path set in Settings → the **Android SDK**
+(`ANDROID_HOME`, `ANDROID_SDK_ROOT`, then Android Studio's `%LOCALAPPDATA%\Android\Sdk`) → `adb` on PATH →
+the built-in adb. The SDK comes before PATH because Android Studio and Flutter use the SDK's adb: using the same
+one keeps everything on the SDK's version, and adb copies with a different protocol version kill each other's
+server ("adb server version doesn't match"). Copies with the same protocol (e.g. 1.0.41) share one server fine.
+An adb on PATH is often a copy that came with another tool (for example Chocolatey's scrcpy package).
+A server that is already running keeps running until adb restarts (Device page → Restart). The Activity log names the adb in
+use and lists any others it found; the status bar shows its version and source.
 scrcpy is given the same adb, so two adb versions never fight. When the app starts the adb server itself,
 it turns on adb's mDNS (`ADB_MDNS_OPENSCREEN=1`). It also sends its own mDNS queries,
 so finding phones works even when another tool started adb without mDNS.

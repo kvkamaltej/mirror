@@ -224,34 +224,61 @@ def _is_bundled(path):
         return False
 
 
-def find_adb(custom=""):
-    """Pick the adb to use. Installed adb wins; the bundled one is the fallback.
+def adb_candidates(custom=""):
+    """Every adb Mirror may use, in priority order: (source label, path).
 
-    Returns (source label, path, [notes])."""
-    candidates = []
+    The Android SDK's adb comes before PATH on purpose: Android Studio and Flutter
+    use the SDK's adb, and adb copies with different protocol versions kill each
+    other's server ("adb server version doesn't match"). A PATH adb is often a
+    copy that came with another tool (e.g. Chocolatey's scrcpy package)."""
+    c = []
     if custom:
-        candidates.append(("custom", custom))
-    which = shutil.which("adb")
-    if which:
-        candidates.append(("system PATH", which))
+        c.append(("Settings", custom))
     for var in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
         root = os.environ.get(var)
         if root:
-            candidates.append((var, os.path.join(root, "platform-tools", "adb.exe")))
+            c.append(("Android SDK (%s)" % var, os.path.join(root, "platform-tools", "adb.exe")))
     local = os.environ.get("LOCALAPPDATA")
     if local:
-        candidates.append(("Android SDK", os.path.join(local, "Android", "Sdk", "platform-tools", "adb.exe")))
+        c.append(("Android SDK (Android Studio)", os.path.join(local, "Android", "Sdk", "platform-tools", "adb.exe")))
+    which = shutil.which("adb")
+    if which:
+        c.append(("PATH", which))
+    return c
 
-    notes, seen = [], set()
-    for src, path in candidates:
+
+def adb_info(path):
+    """(version string, real path) from `adb version`; a PATH shim reports where the real adb is."""
+    rc, out, err = run([path, "version"], timeout=10)
+    if rc != 0 or "Android Debug Bridge" not in out:
+        return None, (err or out).strip() or "rc=%s" % rc
+    v = re.search(r"Version (\S+)", out)
+    real = re.search(r"Installed as (.+)", out)
+    return (v.group(1) if v else "?"), (real.group(1).strip() if real else path)
+
+
+def find_adb(custom=""):
+    """Pick the adb to use (see adb_candidates for the order); built-in is the fallback.
+
+    Returns (source label, path, [notes]). Notes list the other adbs found, so a
+    second version on the PC is visible."""
+    notes, seen, chosen = [], set(), None
+    for src, path in adb_candidates(custom):
         key = os.path.normcase(os.path.abspath(path))
         if key in seen or not os.path.isfile(path) or _is_bundled(path):
             continue
         seen.add(key)
-        rc, out, err = run([path, "version"], timeout=10)
-        if rc == 0 and "Android Debug Bridge" in out:
-            return src, path, notes
-        notes.append("Skipped %s adb (%s): %s" % (src, path, (err or out).strip() or "rc=%s" % rc))
+        ver, real = adb_info(path)
+        if ver is None:
+            notes.append("Skipped %s adb (%s): %s" % (src, path, real))
+            continue
+        where = path if os.path.normcase(real) == key else "%s → %s" % (path, real)
+        if chosen is None:
+            chosen = (src, path, ver)
+        else:
+            notes.append("Also found %s adb v%s (%s), not used" % (src, ver, where))
+    if chosen:
+        return chosen[0], chosen[1], notes
     return "built-in", BUNDLED_ADB, notes
 
 
@@ -1568,12 +1595,12 @@ class App(DevToolsMixin):
 
     def _detect_adb(self):
         src, path, notes = find_adb(self.cfg.get("adb_path", ""))
-        for n in notes:
-            self.log(n)
         self.adb, self.adb_src = path, src
         ver = adb_version(path)
-        vtxt = " v%d.%d" % ver if ver else ""
-        self.log("Using %s adb%s: %s" % (src, vtxt, path))
+        self.adb_ver = (adb_info(path)[0] or "") if path else ""
+        self.log("Using %s adb v%s: %s" % (src, self.adb_ver, path))
+        for n in notes:
+            self.log(n)
         if ver and ver < (30, 0):
             self.log("This adb is older than 30.0 - wireless pairing needs 30.0+. "
                      "Set a newer adb in Settings.")
@@ -2030,7 +2057,9 @@ class App(DevToolsMixin):
                             command=lambda: (self._set_cfg("theme", self.theme_var.get()),
                                              self.apply_theme(self.theme_var.get()))).pack(side="left", padx=(0, 4))
 
-        a = self.card(f, "adb", "Order: path below > adb on PATH > ANDROID_HOME / SDK > built-in.")
+        a = self.card(f, "adb", "Order: path below > Android SDK (ANDROID_HOME / ANDROID_SDK_ROOT / Android Studio) "
+                                "> adb on PATH > built-in. The SDK's adb wins: it is the one Android Studio and "
+                                "Flutter use.")
         self.adb_info = tk.StringVar(value="detecting...")
         ttk.Label(a, textvariable=self.adb_info, wraplength=560, justify="left").pack(anchor="w", pady=(0, 6))
         r = ttk.Frame(a)
@@ -2167,8 +2196,9 @@ class App(DevToolsMixin):
                                "■ Stop recording" if rec else "● Record")
 
     def _update_status_bar(self):
-        self.status_var.set("adb: %s · %s      scrcpy: built-in 2.5" % (self.adb_src, self.adb))
-        self.adb_info.set("In use: %s adb — %s" % (self.adb_src, self.adb))
+        v = getattr(self, "adb_ver", "")
+        self.status_var.set("adb %s from %s · %s      scrcpy: built-in 2.5" % (v, self.adb_src, self.adb))
+        self.adb_info.set("In use: adb %s from %s — %s" % (v, self.adb_src, self.adb))
 
     def _refresh_recent(self):
         nearby = ["%s:%s" % (s["ip"], s["port"]) for s in self.nearby if s["kind"] == "connect"]
